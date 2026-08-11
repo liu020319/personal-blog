@@ -65,7 +65,8 @@ if [[ ! -f "${SERVICE_ENV}" ]]; then
 fi
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now personal-blog-resume
+sudo systemctl enable personal-blog-resume
+sudo systemctl restart personal-blog-resume
 
 echo "[6/8] 验证博客数据服务本机接口"
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -79,18 +80,19 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
 done
 curl -fsS http://127.0.0.1:8091/resumes
+echo
 
 echo "[7/8] 检查并重载 Nginx"
 sudo nginx -t
 sudo systemctl reload nginx
 
 echo "[8/8] 验证博客与康联云入口"
-curl -fsSL --connect-timeout 15 https://xiaoliudev.com/ | grep -q '个人技术博客'
-curl -fsSL --connect-timeout 15 https://xiaoliudev.com/kanglian-cloud/ | grep -Eq '家庭慢病|康联云'
+curl -fsSL --connect-timeout 15 https://xiaoliudev.com/ | grep '个人技术博客' >/dev/null
+curl -fsSL --connect-timeout 15 https://xiaoliudev.com/kanglian-cloud/ | grep -E '家庭慢病|康联云' >/dev/null
 
 echo "STATIC_AND_SERVICE_OK"
 echo "备份目录：${BACKUP_DIR}"
-if sudo nginx -T 2>&1 | grep -q 'location /blog-api/'; then
+if sudo nginx -T 2>&1 | grep 'location /blog-api/' >/dev/null; then
   curl -fsS --connect-timeout 15 https://xiaoliudev.com/blog-api/health >/dev/null
   echo "BLOG_API_PUBLIC_OK"
 else
