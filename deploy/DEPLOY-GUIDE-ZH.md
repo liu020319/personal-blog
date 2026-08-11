@@ -1,4 +1,4 @@
-# xiaoliudev.com 博客 V4 发布说明
+# xiaoliudev.com 博客 V5 发布说明
 
 ## 最终访问关系
 
@@ -14,27 +14,27 @@
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260811-v4.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260811-v5.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260811-v4.zip
+/home/xiaoliu/personal-blog-release-20260811-v5.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260811-v4
-unzip -q /home/xiaoliu/personal-blog-release-20260811-v4.zip \
-  -d /home/xiaoliu/personal-blog-release-20260811-v4
+mkdir -p /home/xiaoliu/personal-blog-release-20260811-v5
+unzip -q /home/xiaoliu/personal-blog-release-20260811-v5.zip \
+  -d /home/xiaoliu/personal-blog-release-20260811-v5
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260811-v4/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260811-v5/deploy/install-release.sh
 ```
 
 脚本会：
@@ -51,7 +51,13 @@ bash /home/xiaoliu/personal-blog-release-20260811-v4/deploy/install-release.sh
 
 ## 3. 接入 Nginx
 
-把 `deploy/nginx-blog-api-location.conf` 中的 `location /blog-api/` 放入现有 `xiaoliudev.com` HTTPS `server` 块。不要改动已有 `/api/` 和 `/assets/`。
+把 `deploy/nginx-blog-api-location.conf` 中的 `location /blog-api/` 放入现有 `xiaoliudev.com` HTTPS `server` 块，也就是包含 `listen 443 ssl` 和 `server_name xiaoliudev.com` 的区块。不要只加到 80 端口区块，也不要改动已有 `/api/` 和 `/assets/`。
+
+如果公开 GET 请求返回博客首页、POST 请求返回 Nginx 405，说明 `/blog-api/` 没有放进 HTTPS 区块，请先检查实际加载配置：
+
+```bash
+sudo nginx -T 2>&1 | grep -n -B 10 -A 25 'location /blog-api/'
+```
 
 修改后：
 
