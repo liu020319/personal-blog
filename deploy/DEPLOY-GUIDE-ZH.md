@@ -1,112 +1,116 @@
-# xiaoliudev.com 发布说明
+# xiaoliudev.com 博客 V2 发布说明
 
 ## 最终访问关系
 
-- `https://xiaoliudev.com/`：个人博客；
+- `https://xiaoliudev.com/`：个人博客静态主站；
 - `https://xiaoliudev.com/kanglian-cloud/#/login`：康联云登录页；
+- `https://xiaoliudev.com/resume-api/`：简历仓库轻量接口；
 - `https://xiaoliudev.com/api/`：继续转发到原 Spring Boot 服务。
 
-博客是纯静态文件，不启动新进程、不增加数据库，也不会长期占用额外内存。
+文章、项目、搜索和主题仍是静态功能。只有简历上传、删除和“设为当前版”使用一个 Python 标准库服务，不使用数据库，默认仅监听 `127.0.0.1:8091`。
 
-## 服务器目录
+## 发布包
 
-```text
-/var/www/dsms/                       # 现有 Nginx 网站根目录，放博客首页
-/var/www/dsms/assets/                # 保留：康联云原静态资源
-/var/www/dsms/kanglian-cloud/        # 新增：康联云子目录入口
-/var/www/dsms/blog-assets/           # 新增：博客独立静态资源
-```
-
-## 推荐发布方式
-
-先把本地打包文件上传到服务器固定位置：
+本地成品：
 
 ```text
-/home/xiaoliu/personal-blog-site-20260811.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260811-v2.zip
 ```
 
-本地成品位于 `D:\CodexWorkFiles\output\personal-blog-site-20260811.zip`。上传完成前不要执行下面的部署命令。
-
-仓库内的 `server-install.sh` 会自动执行以下操作：
-
-1. 检查现有 `/var/www/dsms/index.html` 和 `/var/www/dsms/assets/`；
-2. 优先读取 `/home/xiaoliu/personal-blog-site-20260811.zip`，不存在时才从 GitHub 下载；
-3. 将当前网页完整备份到 `/home/xiaoliu/backups/`；
-4. 把原康联云首页复制到 `/kanglian-cloud/index.html`；
-5. 安装博客首页和 `/blog-assets/`；
-6. 执行 `nginx -t`、重载 Nginx，并访问两个入口验证；
-7. 任一步失败时恢复原首页。
-
-登录服务器后执行：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/liu020319/personal-blog/main/deploy/server-install.sh | bash
-```
-
-脚本运行中会正常询问 `sudo` 密码。最后出现 `DEPLOY_OK` 才表示脚本完成。
-
-## 手工发布顺序
-
-### 1. 先备份当前网页
-
-```bash
-stamp=$(date +%Y%m%d-%H%M%S)
-sudo cp -a /var/www/dsms "/var/www/dsms.backup-$stamp"
-```
-
-作用：保留当前可访问版本。复制命令成功后再继续；报错就停止。
-
-### 2. 保存康联云入口并上传博客
-
-先创建康联云子目录，并保存当前首页：
-
-```bash
-sudo mkdir -p /var/www/dsms/kanglian-cloud
-sudo cp /var/www/dsms/index.html /var/www/dsms/kanglian-cloud/index.html
-```
-
-然后把博客文件上传到 `/var/www/dsms/`。成功标准是服务器存在：
+上传到服务器：
 
 ```text
-/var/www/dsms/index.html
-/var/www/dsms/kanglian-cloud/index.html
-/var/www/dsms/blog-assets/app.js
-/var/www/dsms/blog-assets/data.js
-/var/www/dsms/blog-assets/styles.css
+/home/xiaoliu/personal-blog-release-20260811-v2.zip
 ```
 
-这套布局沿用现有 Nginx 根目录，不修改 `/api/`、`/uploads/` 或 `/assets/` 配置。
+建议解压目录：
 
-### 3. 只检查配置，先不要重载
+```text
+/home/xiaoliu/personal-blog-release-20260811-v2
+```
+
+## 发布流程
+
+### 1. 解压
 
 ```bash
-sudo nginx -t
+mkdir -p /home/xiaoliu/personal-blog-release-20260811-v2
+unzip -q /home/xiaoliu/personal-blog-release-20260811-v2.zip \
+  -d /home/xiaoliu/personal-blog-release-20260811-v2
 ```
 
-出现 `syntax is ok` 和 `test is successful` 才能继续。否则不要重载，先修正配置。
-
-### 4. 重载并验证
+### 2. 安装静态页面与简历服务
 
 ```bash
-sudo systemctl reload nginx
-curl -I http://127.0.0.1/ -H 'Host: xiaoliudev.com'
-curl -I http://127.0.0.1/kanglian-cloud/ -H 'Host: xiaoliudev.com'
-curl -I http://127.0.0.1/api/ -H 'Host: xiaoliudev.com'
+bash /home/xiaoliu/personal-blog-release-20260811-v2/deploy/install-release.sh
 ```
 
-前两个地址应返回 `200`，`/api/` 可能返回业务状态或 `404/405`，但不能是 Nginx 的 `502`。最后再用浏览器检查博客首页、康联云登录页和一次真实登录。
+脚本会：
 
-## 回滚
+1. 检查现有博客、康联云入口和 `/assets/`；
+2. 把当前网页备份到 `/home/xiaoliu/backups/`；
+3. 将旧的错误示例简历移出线上目录并保留在备份中；
+4. 发布新的博客静态文件；
+5. 安装并启动 `personal-blog-resume` 服务；
+6. 首次部署时生成 64 位管理口令，保存到 `/etc/personal-blog-resume.env`；
+7. 检查 Nginx 与两个已有网页入口。
 
-如果博客或康联云入口异常，恢复刚才备份的 Nginx 配置后执行：
+出现 `STATIC_AND_SERVICE_OK` 表示页面和本机简历服务正常。
+
+### 3. 把简历接口接入现有 HTTPS 站点
+
+将 `deploy/nginx-resume-api-location.conf` 中的 `location /resume-api/` 放进现有 `xiaoliudev.com` HTTPS `server` 块。不要改动已有 `/api/` 和 `/assets/`。
+
+修改后：
 
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
+curl -fsS https://xiaoliudev.com/resume-api/health
 ```
 
-只有 `nginx -t` 成功才能重载。网页文件不必立刻删除，旧配置恢复后会重新指向原康联云目录。
+只有 `nginx -t` 成功才允许重载。健康接口应返回：
 
-## HTTPS
+```json
+{"ok": true}
+```
 
-当前已验证 `https://xiaoliudev.com/` 返回 200，证书覆盖 `xiaoliudev.com` 与 `www.xiaoliudev.com`，有效期至 2026-11-06。修改 Nginx 时要同步调整现有的 443 `server` 块；如果 HTTP 与 HTTPS 分开配置，HTTP 块只保留跳转，以上 location 应放入 HTTPS 块。
+## 管理口令
+
+查看口令：
+
+```bash
+sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' /etc/personal-blog-resume.env
+```
+
+口令不要发给任何人，也不要写入 GitHub、博客配置或聊天截图。网页只把它放在当前浏览器的 `sessionStorage`；关闭页面后自动清除。
+
+## 简历数据位置
+
+```text
+/var/lib/personal-blog-resumes/resumes.json          # 公开版本记录
+/var/lib/personal-blog-resumes/files/                # 正在公开的 PDF
+/var/lib/personal-blog-resumes/deleted-resumes.json  # 删除记录
+/var/lib/personal-blog-resumes/trash/                # 删除后的服务器恢复副本
+```
+
+网页删除后会立即从公开列表消失，但服务器保留恢复副本，避免误删后完全找不回来。
+
+## 服务检查
+
+```bash
+sudo systemctl status personal-blog-resume --no-pager
+sudo journalctl -u personal-blog-resume -n 80 --no-pager
+curl -fsS http://127.0.0.1:8091/health
+```
+
+## 备份重点
+
+以后备份服务器时，除原来的业务系统外，还要备份：
+
+```text
+/var/lib/personal-blog-resumes
+/etc/personal-blog-resume.env
+```
+
+前者是历史简历数据，后者是管理口令。两者都不要提交到 Git。

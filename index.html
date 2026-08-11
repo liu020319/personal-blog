@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'self'; frame-src 'self'; base-uri 'self'; form-action 'self'" />
     <meta name="description" content="小刘的个人技术博客，记录 Java 后端、Vue 全栈实践、系统设计、项目复盘与简历成长轨迹。" />
     <meta name="keywords" content="小刘,Java,Spring Boot,Vue,MySQL,个人博客,项目作品,简历" />
     <meta name="author" content="小刘" />
@@ -71,7 +72,7 @@
       </div>
       <div class="shell footer-bottom">
         <span>© <span id="current-year"></span> 小刘</span>
-        <span>纯静态构建 · 轻量、安全、易维护</span>
+        <span>静态主站 · 简历模块独立管理</span>
       </div>
     </footer>
 
@@ -90,6 +91,7 @@
 
     <noscript><div class="noscript">本站需要启用 JavaScript 才能浏览文章与项目。</div></noscript>
     <script src="./blog-assets/data.js"></script>
+    <script src="./blog-assets/resume-repository.js"></script>
     <script src="./blog-assets/app.js"></script>
   </body>
 </html>

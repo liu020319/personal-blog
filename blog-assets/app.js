@@ -79,17 +79,36 @@
     main.innerHTML = `<section class="page-hero projects-hero"><div class="shell"><p class="eyebrow">PROJECT SPACE</p><h1>项目空间</h1><p>这里集中展示我独立完成或深入参与的项目。线上项目提供直接入口，后续作品会持续加入。</p></div></section><section class="section page-section"><div class="shell"><div class="project-grid">${data.projects.map((project) => projectCard(project, false)).join('')}<article class="project-card project-coming"><div class="coming-plus">+</div><p class="eyebrow">NEXT PROJECT</p><h3>下一个项目</h3><p>预留的扩展位置。新增项目只需在 <code>blog-assets/data.js</code> 中增加名称、简介、技术栈和登录地址。</p></article></div><div class="project-note"><strong>关于项目入口</strong><p>点击“进入项目登录页”会在新窗口打开独立业务系统。博客不保存业务账号、密码或生产配置。</p></div></div></section>`;
   }
 
-  function renderResume() {
-    const current = data.resume.current;
-    const timeline = data.resume.history.map((item) => `<article class="resume-version ${item.current ? 'current' : ''}">
+  async function renderResume() {
+    const repository = window.ResumeRepository;
+    main.innerHTML = '<section class="section resume-loading"><div class="shell"><p>正在读取简历仓库…</p></div></section>';
+    const result = repository ? await repository.list() : { online: false, items: data.resume.history || [] };
+    if (routeParts()[0] !== 'resume') return;
+    const items = [...result.items].sort((a, b) => Number(b.current) - Number(a.current) || b.date.localeCompare(a.date));
+    const current = items.find((item) => item.current) || items[0];
+    const isAdmin = Boolean(repository?.getToken());
+    const timeline = items.length ? items.map((item) => `<article class="resume-version ${item.current ? 'current' : ''}">
       <div class="resume-version-marker"><i></i><span>${escapeHtml(item.date)}</span></div>
-      <div class="resume-version-card"><div class="resume-version-head"><div><p class="eyebrow">${escapeHtml(item.version)}</p><h3>${escapeHtml(item.stage)}</h3></div>${item.current ? '<span class="current-badge">当前版本</span>' : ''}</div><p>${escapeHtml(item.change)}</p>${item.available ? `<div class="resume-version-actions"><a class="text-link" href="${escapeHtml(item.file)}" target="_blank" rel="noreferrer">在线查看 ${icon('external')}</a><a class="text-link muted-link" href="${escapeHtml(item.file)}" download>下载存档</a></div>` : '<span class="pending-label">等待补充历史文件</span>'}</div>
-    </article>`).join('');
+      <div class="resume-version-card"><div class="resume-version-head"><div><p class="eyebrow">${escapeHtml(item.version)}</p><h3>${escapeHtml(item.stage)}</h3></div>${item.current ? '<span class="current-badge">当前版本</span>' : ''}</div><p>${escapeHtml(item.change)}</p><div class="resume-version-actions"><a class="text-link" href="${escapeHtml(item.file)}" target="_blank" rel="noreferrer">在线查看 ${icon('external')}</a><a class="text-link muted-link" href="${escapeHtml(item.file)}" download>下载存档</a>${item.current ? '' : `<button class="text-button set-current-resume" type="button" data-resume-id="${escapeHtml(item.id)}">设为当前版</button>`}<button class="text-button danger-text delete-resume" type="button" data-resume-id="${escapeHtml(item.id)}" data-resume-label="${escapeHtml(item.version)}">删除</button></div></div>
+    </article>`).join('') : '<div class="resume-empty"><span>0</span><h3>简历仓库还是空的</h3><p>点击“上传新简历”，从刚毕业的版本开始建立你的成长时间线。</p></div>';
 
-    main.innerHTML = `<section class="page-hero resume-hero"><div class="shell"><p class="eyebrow">RESUME REPOSITORY</p><h1>简历仓库</h1><p>简历不只是一张求职页面，也是一份阶段记录。这里保存当前公开简历和历史版本，持续观察能力、项目与职业定位如何变化。</p></div></section>
-    <section class="section resume-current"><div class="shell"><div class="section-heading"><div><p class="eyebrow">CURRENT RESUME</p><h2>当前公开简历</h2></div><p>${escapeHtml(current.summary)}</p></div><div class="resume-showcase"><div class="resume-showcase-copy"><span class="resume-version-label">${escapeHtml(current.version)}</span><h3>${escapeHtml(current.title)}</h3><p>更新于 ${formatDate(current.updated)}。公开版本统一使用“小刘”，联系方式通过 GitHub，已移除私人电话、邮箱和项目演示账号。</p><div class="resume-actions"><a class="primary-button" href="${escapeHtml(current.file)}" target="_blank" rel="noreferrer">在线查看 PDF ${icon('external')}</a><a class="secondary-button" href="${escapeHtml(current.file)}" download>下载简历</a></div><div class="resume-safety"><strong>公开边界</strong><span>原始简历保留在本地；博客只展示经过隐私处理的副本。</span></div></div><div class="resume-preview"><object data="${escapeHtml(current.file)}#toolbar=0&navpanes=0" type="application/pdf" aria-label="小刘当前公开简历预览"><div class="pdf-fallback"><p>当前浏览器不支持内嵌 PDF。</p><a class="primary-button" href="${escapeHtml(current.file)}" target="_blank" rel="noreferrer">打开简历</a></div></object></div></div></div></section>
-    <section class="section resume-history"><div class="shell resume-history-grid"><div class="resume-history-heading"><p class="eyebrow">VERSION HISTORY</p><h2>成长时间线</h2><p>旧版本不会覆盖。每次更新记录“为什么改”和“重点变了什么”，让成长过程真正可回看。</p></div><div class="resume-timeline">${timeline}</div></div></section>
-    <section class="section resume-method"><div class="shell resume-method-grid"><div><p class="eyebrow">HOW IT WORKS</p><h2>如何加入下一版</h2></div><ol><li><span>01</span><div><strong>保留原文件</strong><p>新 PDF 使用日期或阶段命名，永远不覆盖旧版。</p></div></li><li><span>02</span><div><strong>生成公开副本</strong><p>统一使用“小刘”，发布前检查电话、邮箱、账号和文档元数据。</p></div></li><li><span>03</span><div><strong>记录阶段变化</strong><p>在版本配置中写明定位、项目和能力重点的变化。</p></div></li></ol></div></section>`;
+    const currentBlock = current ? `<div class="resume-showcase"><div class="resume-showcase-copy"><span class="resume-version-label">${escapeHtml(current.version)}</span><h3>${escapeHtml(current.stage)}</h3><p>更新于 ${formatDate(current.date)}。这份文件由小刘主动上传并设为当前公开版本。</p><div class="resume-actions"><a class="primary-button" href="${escapeHtml(current.file)}" target="_blank" rel="noreferrer">在线查看 PDF ${icon('external')}</a><a class="secondary-button" href="${escapeHtml(current.file)}" download>下载简历</a></div><div class="resume-safety"><strong>公开边界</strong><span>上传前必须完成隐私和保密检查；管理口令不会写入网页或 GitHub。</span></div></div><div class="resume-preview"><object data="${escapeHtml(current.file)}#toolbar=0&navpanes=0" type="application/pdf" aria-label="小刘当前公开简历预览"><div class="pdf-fallback"><p>当前浏览器不支持内嵌 PDF。</p><a class="primary-button" href="${escapeHtml(current.file)}" target="_blank" rel="noreferrer">打开简历</a></div></object></div></div>` : '<div class="resume-current-empty"><span>PDF</span><h3>还没有当前公开简历</h3><p>进入管理模式后上传 PDF，可以将任意历史版本设为当前版。</p></div>';
+
+    main.innerHTML = `<section class="page-hero resume-hero"><div class="shell resume-hero-grid"><div><p class="eyebrow">RESUME REPOSITORY</p><h1>简历仓库</h1><p>简历不只是一张求职页面，也是一份阶段记录。这里保存当前公开简历和历史版本，持续观察能力、项目与职业定位如何变化。</p></div><div class="resume-admin-actions"><button class="primary-button" id="upload-resume" type="button">上传新简历</button><button class="secondary-button" id="resume-login" type="button">${isAdmin ? '退出管理' : '进入管理'}</button></div></div></section>
+    ${result.online ? '' : '<section class="service-notice"><div class="shell"><strong>简历服务尚未连接</strong><span>静态页面已经就绪，完成服务器端简历服务部署后即可上传和删除。</span></div></section>'}
+    <section class="section resume-current"><div class="shell"><div class="section-heading"><div><p class="eyebrow">CURRENT RESUME</p><h2>当前公开简历</h2></div><p>公开区不预置示例文件，只展示你亲自上传并确认可以公开的真实历史版本。</p></div>${currentBlock}</div></section>
+    <section class="section resume-history"><div class="shell resume-history-grid"><div class="resume-history-heading"><p class="eyebrow">VERSION HISTORY</p><h2>成长时间线</h2><p>每份文件独立保存。你可以上传、设为当前版或删除，旧版本不会被新文件覆盖。</p></div><div class="resume-timeline">${timeline}</div></div></section>
+    <section class="section resume-method"><div class="shell resume-method-grid"><div><p class="eyebrow">HOW IT WORKS</p><h2>上传前的三道检查</h2></div><ol><li><span>01</span><div><strong>保留原文件</strong><p>本地原始简历不做任何修改，博客保存单独的公开副本。</p></div></li><li><span>02</span><div><strong>完成脱敏</strong><p>删除真实姓名、私人联系方式、地址、账号密码以及不应公开的公司项目细节。</p></div></li><li><span>03</span><div><strong>记录阶段变化</strong><p>写清这版简历的定位、项目表达和能力重点发生了什么变化。</p></div></li></ol></div></section>`;
+
+    const handleError = (error) => { if (error?.status !== 0) window.alert(error?.message || '操作失败，请稍后重试。'); };
+    document.getElementById('upload-resume')?.addEventListener('click', () => repository?.openUpload().catch(handleError));
+    document.getElementById('resume-login')?.addEventListener('click', () => {
+      if (!repository) return;
+      if (repository.getToken()) repository.logout();
+      else repository.login().then(renderResume).catch(handleError);
+    });
+    document.querySelectorAll('.delete-resume').forEach((button) => button.addEventListener('click', () => repository?.remove(button.dataset.resumeId, button.dataset.resumeLabel).catch(handleError)));
+    document.querySelectorAll('.set-current-resume').forEach((button) => button.addEventListener('click', () => repository?.setCurrent(button.dataset.resumeId).catch(handleError)));
   }
 
   function renderAbout() {
@@ -182,6 +201,7 @@
   backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 
   document.getElementById('current-year').textContent = new Date().getFullYear();
+  window.addEventListener('resume-repository-changed', () => { if (routeParts()[0] === 'resume') renderResume(); });
   window.addEventListener('hashchange', route);
   if (!location.hash) history.replaceState(null, '', `${rootUrl}#/`);
   route();
