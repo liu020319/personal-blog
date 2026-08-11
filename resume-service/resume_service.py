@@ -499,7 +499,7 @@ class ResumeHandler(BaseHTTPRequestHandler):
                            VALUES (?, ?, ?, ?, ?, 'new', ?, ?)""",
                         (lead_id, name, method, contact_value, requirement, now, now),
                     )
-                self.json_response(HTTPStatus.CREATED, {"ok": True, "message": "已经收到，我看到后会和你联系"})
+                self.json_response(HTTPStatus.CREATED, {"ok": True, "message": "合作需求已提交，小刘会在看到后与你联系"})
                 return
             except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
                 self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
