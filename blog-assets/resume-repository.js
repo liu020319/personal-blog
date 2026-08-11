@@ -2,7 +2,7 @@
   'use strict';
 
   const config = window.BLOG_DATA?.resume || {};
-  const apiBase = String(config.api || './resume-api').replace(/\/$/, '');
+  const apiBase = String(config.api || './blog-api').replace(/\/$/, '');
   const tokenKey = 'xiaoliu-resume-admin-token';
 
   class ApiError extends Error {

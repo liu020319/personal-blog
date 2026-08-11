@@ -12,7 +12,7 @@ window.BLOG_DATA = {
     github: 'https://github.com/liu020319'
   },
   resume: {
-    api: './resume-api',
+    api: './blog-api',
     history: []
   },
   projects: [
@@ -26,6 +26,24 @@ window.BLOG_DATA = {
       url: 'https://xiaoliudev.com/kanglian-cloud/#/login',
       source: 'https://github.com/liu020319/DSMS',
       featured: true,
+      accent: 'jade'
+    }
+  ],
+  services: [
+    {
+      id: 'graduation-project-guidance',
+      name: '毕业设计项目陪跑',
+      audience: '面向在校大学生',
+      description: '把你的想法梳理成可以运行、可以讲清楚、可以继续扩展的项目，并在开发过程中真正理解每一个关键选择。',
+      highlights: ['想法与需求梳理', 'Java / Vue 定制实现', '代码讲解与问题指导', '测试、部署与演示准备'],
+      accent: 'gold'
+    },
+    {
+      id: 'freelance-development',
+      name: '开发兼职合作',
+      audience: '面向个人与小型团队',
+      description: '承接范围清晰的软件开发与技术支持需求，从需求确认、阶段交付到上线验证保持透明，避免项目做到一半失去边界。',
+      highlights: ['Java 后端与接口开发', 'Vue 管理端与业务页面', 'SQL、数据报表与排障', 'Linux / Nginx 部署上线'],
       accent: 'jade'
     }
   ],
@@ -69,13 +87,13 @@ window.BLOG_DATA = {
       readingMinutes: 5,
       featured: true,
       content: `
-        <p class="lead">个人博客的文章、项目和页面不需要再启动一套 Java 服务与数据库。对目前的使用规模来说，静态主站仍然是更稳妥的选择；只有需要写入的简历管理使用一个独立轻量服务。</p>
+        <p class="lead">个人博客的文章、项目和页面不需要再启动一套 Java 服务与 MySQL。对目前的使用规模来说，静态主站仍然是更稳妥的选择；只有确实需要写入的简历、点赞、评论和合作留言使用一个独立轻量服务。</p>
         <h2 id="resource">把资源留给业务系统</h2>
-        <p>现有云服务器承担了 Nginx、Java 后端和 MySQL。博客的大部分内容都是公开展示，静态 HTML、CSS 和 JavaScript 已经足够。简历上传与删除单独交给仅监听本机端口的小服务，文章访问仍不会占用数据库连接，也不会和业务接口争抢内存。</p>
+        <p>现有云服务器承担了 Nginx、Java 后端和 MySQL。博客的大部分内容都是公开展示，静态 HTML、CSS 和 JavaScript 已经足够。少量写入交给仅监听本机端口的小服务，并使用 SQLite 单文件保存；文章正文访问不需要查询数据库，也不会和业务系统争抢 MySQL 连接。</p>
         <h2 id="benefits">静态方案带来的好处</h2>
         <ul><li><strong>轻：</strong>没有常驻博客进程，部署文件体积小。</li><li><strong>稳：</strong>页面文件可以直接缓存，不依赖数据库是否可用。</li><li><strong>安全：</strong>减少管理后台、插件和数据库暴露面。</li><li><strong>省心：</strong>提交到 GitHub 后即可发布，回滚也只是切换版本。</li></ul>
         <h2 id="features">静态不等于功能少</h2>
-        <p>文章搜索、分类标签、归档、深色模式、阅读进度、RSS 和项目展示都可以在浏览器端完成。只有简历上传、删除这类确实需要服务器写入的能力，才接入受口令保护的独立服务。</p>
+        <p>文章搜索、分类标签、归档、深色模式、阅读进度、RSS 和项目展示都可以在浏览器端完成。只有简历管理、点赞、评论和合作留言这类需要保存数据的能力，才接入独立服务；评论与联系方式仍由管理口令保护的后台统一处理。</p>
         <blockquote>架构的价值不是组件越多越好，而是在当前约束下，用尽量少的复杂度解决真实问题。</blockquote>
         <h2 id="next">后续扩展</h2>
         <p>以后文章量增长，可以继续保持相同页面结构，只把内容生成环节交给静态站点生成器；访问侧仍然不需要额外服务器资源。</p>`

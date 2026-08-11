@@ -1,100 +1,106 @@
-# xiaoliudev.com 博客 V2 发布说明
+# xiaoliudev.com 博客 V4 发布说明
 
 ## 最终访问关系
 
 - `https://xiaoliudev.com/`：个人博客静态主站；
 - `https://xiaoliudev.com/kanglian-cloud/#/login`：康联云登录页；
-- `https://xiaoliudev.com/resume-api/`：简历仓库轻量接口；
+- `https://xiaoliudev.com/blog-api/`：简历、点赞、评论和合作留言接口；
 - `https://xiaoliudev.com/api/`：继续转发到原 Spring Boot 服务。
 
-文章、项目、搜索和主题仍是静态功能。只有简历上传、删除和“设为当前版”使用一个 Python 标准库服务，不使用数据库，默认仅监听 `127.0.0.1:8091`。
+文章与项目页面仍由 Nginx 直接提供。会产生数据的功能由一个 Python 标准库服务处理，默认仅监听 `127.0.0.1:8091`；点赞、评论和合作留言保存在 SQLite 单文件数据库，不占用现有 MySQL。
 
 ## 发布包
 
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260811-v2.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260811-v4.zip
 ```
 
-上传到服务器：
+上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260811-v2.zip
+/home/xiaoliu/personal-blog-release-20260811-v4.zip
 ```
 
-建议解压目录：
-
-```text
-/home/xiaoliu/personal-blog-release-20260811-v2
-```
-
-## 发布流程
-
-### 1. 解压
+## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260811-v2
-unzip -q /home/xiaoliu/personal-blog-release-20260811-v2.zip \
-  -d /home/xiaoliu/personal-blog-release-20260811-v2
+mkdir -p /home/xiaoliu/personal-blog-release-20260811-v4
+unzip -q /home/xiaoliu/personal-blog-release-20260811-v4.zip \
+  -d /home/xiaoliu/personal-blog-release-20260811-v4
 ```
 
-### 2. 安装静态页面与简历服务
+## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260811-v2/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260811-v4/deploy/install-release.sh
 ```
 
 脚本会：
 
-1. 检查现有博客、康联云入口和 `/assets/`；
-2. 把当前网页备份到 `/home/xiaoliu/backups/`；
-3. 将旧的错误示例简历移出线上目录并保留在备份中；
-4. 发布新的博客静态文件；
-5. 安装并启动 `personal-blog-resume` 服务；
-6. 首次部署时生成 64 位管理口令，保存到 `/etc/personal-blog-resume.env`；
-7. 检查 Nginx 与两个已有网页入口。
+1. 检查博客、康联云入口和原 `/assets/`；
+2. 把当前网页与旧服务备份到 `/home/xiaoliu/backups/`；
+3. 移除旧的错误示例简历，但在备份目录保留恢复副本；
+4. 发布新页面；
+5. 安装并启动 `personal-blog-resume` 轻量服务；
+6. 首次部署时生成管理口令，保存到 `/etc/personal-blog-resume.env`；
+7. 验证服务、博客首页和康联云入口。
 
-出现 `STATIC_AND_SERVICE_OK` 表示页面和本机简历服务正常。
+出现 `STATIC_AND_SERVICE_OK` 才表示本机安装完成。
 
-### 3. 把简历接口接入现有 HTTPS 站点
+## 3. 接入 Nginx
 
-将 `deploy/nginx-resume-api-location.conf` 中的 `location /resume-api/` 放进现有 `xiaoliudev.com` HTTPS `server` 块。不要改动已有 `/api/` 和 `/assets/`。
+把 `deploy/nginx-blog-api-location.conf` 中的 `location /blog-api/` 放入现有 `xiaoliudev.com` HTTPS `server` 块。不要改动已有 `/api/` 和 `/assets/`。
 
 修改后：
 
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
-curl -fsS https://xiaoliudev.com/resume-api/health
+curl -fsS https://xiaoliudev.com/blog-api/health
 ```
 
-只有 `nginx -t` 成功才允许重载。健康接口应返回：
+只有 `nginx -t` 成功才能重载。健康接口应返回：
 
 ```json
 {"ok": true}
 ```
 
-## 管理口令
+## 管理中心
 
-查看口令：
+访问：
+
+```text
+https://xiaoliudev.com/#/manage
+```
+
+管理中心可以：
+
+- 查看访客留下的微信、电话或邮箱；
+- 标记合作留言为新留言、已联系或已结束；
+- 审核评论，通过后才会公开；
+- 删除不合适的评论或合作记录。
+
+查看管理口令：
 
 ```bash
 sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' /etc/personal-blog-resume.env
 ```
 
-口令不要发给任何人，也不要写入 GitHub、博客配置或聊天截图。网页只把它放在当前浏览器的 `sessionStorage`；关闭页面后自动清除。
+口令不得写入 GitHub、网页配置、截图或聊天记录。网页只将口令保存在当前浏览器会话中。
 
-## 简历数据位置
+## 数据位置
 
 ```text
-/var/lib/personal-blog-resumes/resumes.json          # 公开版本记录
-/var/lib/personal-blog-resumes/files/                # 正在公开的 PDF
-/var/lib/personal-blog-resumes/deleted-resumes.json  # 删除记录
-/var/lib/personal-blog-resumes/trash/                # 删除后的服务器恢复副本
+/var/lib/personal-blog-resumes/blog.db              # 点赞、评论、合作联系方式
+/var/lib/personal-blog-resumes/resumes.json         # 公开简历版本记录
+/var/lib/personal-blog-resumes/files/               # 正在公开的 PDF
+/var/lib/personal-blog-resumes/deleted-resumes.json # 删除的简历记录
+/var/lib/personal-blog-resumes/trash/               # 简历恢复副本
 ```
 
-网页删除后会立即从公开列表消失，但服务器保留恢复副本，避免误删后完全找不回来。
+数据库目录权限为 `0700`，服务文件默认使用 `0077` 权限掩码。合作联系方式不会通过公开接口返回。
 
 ## 服务检查
 
@@ -106,11 +112,9 @@ curl -fsS http://127.0.0.1:8091/health
 
 ## 备份重点
 
-以后备份服务器时，除原来的业务系统外，还要备份：
-
 ```text
 /var/lib/personal-blog-resumes
 /etc/personal-blog-resume.env
 ```
 
-前者是历史简历数据，后者是管理口令。两者都不要提交到 Git。
+前者包含 SQLite 数据库与历史简历，后者是管理口令；两者都不能提交到 Git。

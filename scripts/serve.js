@@ -17,11 +17,11 @@ const mime = {
 
 http.createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
-  if (pathname.startsWith('/resume-api/')) {
+  if (pathname.startsWith('/blog-api/')) {
     const proxyRequest = http.request({
       hostname: '127.0.0.1',
       port: resumeApiPort,
-      path: pathname.replace('/resume-api', '') || '/',
+      path: pathname.replace('/blog-api', '') || '/',
       method: request.method,
       headers: { ...request.headers, host: `127.0.0.1:${resumeApiPort}` }
     }, (proxyResponse) => {

@@ -9,19 +9,23 @@ server; the token is never embedded in the static site or returned by the API.
 from __future__ import annotations
 
 import hmac
+import hashlib
 import json
 import os
 import re
 import shutil
+import sqlite3
 import threading
+import time
 import uuid
+from collections import defaultdict, deque
 from datetime import date, datetime, timezone
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 HOST = os.environ.get("RESUME_HOST", "127.0.0.1")
@@ -31,16 +35,26 @@ FILES_DIR = DATA_DIR / "files"
 TRASH_DIR = DATA_DIR / "trash"
 INDEX_FILE = DATA_DIR / "resumes.json"
 DELETED_INDEX_FILE = DATA_DIR / "deleted-resumes.json"
+DATABASE_FILE = DATA_DIR / "blog.db"
 ADMIN_TOKEN = os.environ.get("RESUME_ADMIN_TOKEN", "")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 256 * 1024
 LOCK = threading.RLock()
+RATE_LOCK = threading.Lock()
+RATE_BUCKETS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ID_RE = re.compile(r"^[a-z0-9-]{12,80}$")
+ARTICLE_SLUG_RE = re.compile(r"^[a-z0-9-]{2,100}$")
+VISITOR_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 UNSAFE_METADATA_RE = re.compile(
     r"(?:[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?<!\d)1[3-9]\d{9}(?!\d)|"
     r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)|密码|口令|secret|token|access[_-]?key)",
+    re.IGNORECASE,
+)
+PUBLIC_PII_RE = re.compile(
+    r"(?:[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?<!\d)1[3-9]\d{9}(?!\d)|"
+    r"https?://|(?:微信|手机号|电话|邮箱)\s*[:：])",
     re.IGNORECASE,
 )
 
@@ -56,6 +70,90 @@ def ensure_storage() -> None:
         atomic_write_json([])
     if not DELETED_INDEX_FILE.exists():
         atomic_write_deleted_json([])
+    initialize_database()
+
+
+def database() -> sqlite3.Connection:
+    connection = sqlite3.connect(DATABASE_FILE, timeout=8)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 8000")
+    return connection
+
+
+def initialize_database() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DATABASE_FILE, timeout=8) as connection:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS article_likes (
+              article_slug TEXT NOT NULL,
+              visitor_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (article_slug, visitor_hash)
+            );
+            CREATE TABLE IF NOT EXISTS article_comments (
+              id TEXT PRIMARY KEY,
+              article_slug TEXT NOT NULL,
+              nickname TEXT NOT NULL,
+              content TEXT NOT NULL,
+              status TEXT NOT NULL CHECK (status IN ('pending', 'approved')),
+              created_at TEXT NOT NULL,
+              approved_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_comments_public
+              ON article_comments(article_slug, status, created_at);
+            CREATE TABLE IF NOT EXISTS cooperation_leads (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              contact_method TEXT NOT NULL,
+              contact_value TEXT NOT NULL,
+              requirement TEXT NOT NULL,
+              status TEXT NOT NULL CHECK (status IN ('new', 'contacted', 'closed')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_leads_status
+              ON cooperation_leads(status, created_at);
+            """
+        )
+
+
+def check_rate(client: str, action: str, limit: int, window_seconds: int) -> bool:
+    now = time.monotonic()
+    key = (client, action)
+    with RATE_LOCK:
+        bucket = RATE_BUCKETS[key]
+        while bucket and now - bucket[0] > window_seconds:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            return False
+        bucket.append(now)
+        return True
+
+
+def clean_public_text(value: str, field: str, minimum: int, maximum: int) -> str:
+    cleaned = " ".join(value.replace("\x00", " ").split()).strip()
+    if not minimum <= len(cleaned) <= maximum:
+        raise ValueError(f"{field} 长度应为 {minimum}-{maximum} 个字符")
+    if PUBLIC_PII_RE.search(cleaned):
+        raise ValueError(f"{field} 中不能公开联系方式或外部链接")
+    return cleaned
+
+
+def clean_private_text(value: str, field: str, minimum: int, maximum: int) -> str:
+    cleaned = " ".join(value.replace("\x00", " ").split()).strip()
+    if not minimum <= len(cleaned) <= maximum:
+        raise ValueError(f"{field} 长度应为 {minimum}-{maximum} 个字符")
+    return cleaned
+
+
+def valid_article_slug(value: str) -> str:
+    if not ARTICLE_SLUG_RE.fullmatch(value):
+        raise ValueError("文章标识不正确")
+    return value
 
 
 def atomic_write_json(items: list[dict]) -> None:
@@ -98,7 +196,7 @@ def public_item(item: dict) -> dict:
         "date": item["date"],
         "change": item["change"],
         "current": bool(item.get("current")),
-        "file": f"./resume-api/files/{resume_id}.pdf",
+        "file": f"./blog-api/files/{resume_id}.pdf",
         "createdAt": item["createdAt"],
     }
 
@@ -202,8 +300,37 @@ class ResumeHandler(BaseHTTPRequestHandler):
             raise ValueError("上传请求超过 10 MB 限制")
         return self.rfile.read(length)
 
+    def json_body(self, maximum: int = 64 * 1024) -> dict:
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            raise ValueError("请求必须使用 JSON 格式")
+        length_text = self.headers.get("Content-Length", "")
+        if not length_text.isdigit():
+            raise ValueError("缺少有效的请求长度")
+        length = int(length_text)
+        if length <= 0 or length > maximum:
+            raise ValueError("请求内容过大或为空")
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("请求内容必须是对象")
+        return payload
+
+    def client_key(self) -> str:
+        return (self.headers.get("X-Real-IP") or self.client_address[0] or "unknown")[:80]
+
+    def require_human_form(self, payload: dict) -> None:
+        if payload.get("website"):
+            raise ValueError("提交未通过校验")
+        started_at = payload.get("startedAt")
+        if not isinstance(started_at, (int, float)):
+            raise ValueError("表单校验信息缺失，请刷新页面后重试")
+        elapsed = time.time() * 1000 - float(started_at)
+        if elapsed < 2500 or elapsed > 2 * 60 * 60 * 1000:
+            raise ValueError("提交过快或页面停留时间过长，请刷新后重试")
+
     def do_GET(self) -> None:  # noqa: N802
-        path = unquote(urlparse(self.path).path)
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
         try:
             if path == "/health":
                 self.json_response(HTTPStatus.OK, {"ok": True})
@@ -211,6 +338,58 @@ class ResumeHandler(BaseHTTPRequestHandler):
             if path == "/admin/check":
                 if self.require_admin():
                     self.json_response(HTTPStatus.OK, {"ok": True})
+                return
+            interaction_match = re.fullmatch(r"/articles/([a-z0-9-]{2,100})/interaction", path)
+            if interaction_match:
+                slug = valid_article_slug(interaction_match.group(1))
+                with database() as connection:
+                    like_count = connection.execute(
+                        "SELECT COUNT(*) FROM article_likes WHERE article_slug = ?", (slug,)
+                    ).fetchone()[0]
+                    rows = connection.execute(
+                        """SELECT id, nickname, content, created_at
+                           FROM article_comments
+                           WHERE article_slug = ? AND status = 'approved'
+                           ORDER BY created_at ASC LIMIT 100""",
+                        (slug,),
+                    ).fetchall()
+                comments = [
+                    {"id": row["id"], "nickname": row["nickname"], "content": row["content"], "createdAt": row["created_at"]}
+                    for row in rows
+                ]
+                self.json_response(HTTPStatus.OK, {"ok": True, "likeCount": like_count, "comments": comments})
+                return
+            if path == "/admin/comments":
+                if not self.require_admin():
+                    return
+                status = parse_qs(parsed.query).get("status", ["pending"])[0]
+                if status not in {"pending", "approved", "all"}:
+                    raise ValueError("评论状态不正确")
+                sql = "SELECT id, article_slug, nickname, content, status, created_at, approved_at FROM article_comments"
+                params: tuple = ()
+                if status != "all":
+                    sql += " WHERE status = ?"
+                    params = (status,)
+                sql += " ORDER BY created_at DESC LIMIT 300"
+                with database() as connection:
+                    rows = connection.execute(sql, params).fetchall()
+                self.json_response(HTTPStatus.OK, {"ok": True, "items": [dict(row) for row in rows]})
+                return
+            if path == "/admin/leads":
+                if not self.require_admin():
+                    return
+                status = parse_qs(parsed.query).get("status", ["all"])[0]
+                if status not in {"new", "contacted", "closed", "all"}:
+                    raise ValueError("合作状态不正确")
+                sql = "SELECT id, name, contact_method, contact_value, requirement, status, created_at, updated_at FROM cooperation_leads"
+                params = ()
+                if status != "all":
+                    sql += " WHERE status = ?"
+                    params = (status,)
+                sql += " ORDER BY created_at DESC LIMIT 300"
+                with database() as connection:
+                    rows = connection.execute(sql, params).fetchall()
+                self.json_response(HTTPStatus.OK, {"ok": True, "items": [dict(row) for row in rows]})
                 return
             if path == "/resumes":
                 with LOCK:
@@ -242,11 +421,93 @@ class ResumeHandler(BaseHTTPRequestHandler):
                     shutil.copyfileobj(stream, self.wfile)
                 return
             self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error):
             self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "服务器读取失败，请检查服务日志")
 
     def do_POST(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        interaction_match = re.fullmatch(r"/articles/([a-z0-9-]{2,100})/(likes|comments)", path)
+        if interaction_match:
+            slug = interaction_match.group(1)
+            action = interaction_match.group(2)
+            try:
+                valid_article_slug(slug)
+                payload = self.json_body()
+                if action == "likes":
+                    if not check_rate(self.client_key(), "like", 80, 3600):
+                        self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "操作过于频繁，请稍后重试")
+                        return
+                    visitor_id = str(payload.get("visitorId", ""))
+                    if not VISITOR_ID_RE.fullmatch(visitor_id):
+                        raise ValueError("访客标识不正确，请刷新页面后重试")
+                    visitor_hash = hashlib.sha256(visitor_id.encode("utf-8")).hexdigest()
+                    with database() as connection:
+                        cursor = connection.execute(
+                            "INSERT OR IGNORE INTO article_likes(article_slug, visitor_hash, created_at) VALUES (?, ?, ?)",
+                            (slug, visitor_hash, utc_now()),
+                        )
+                        like_count = connection.execute(
+                            "SELECT COUNT(*) FROM article_likes WHERE article_slug = ?", (slug,)
+                        ).fetchone()[0]
+                    self.json_response(HTTPStatus.OK, {"ok": True, "liked": True, "added": cursor.rowcount == 1, "likeCount": like_count})
+                    return
+
+                if not check_rate(self.client_key(), "comment", 5, 600):
+                    self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "评论提交过于频繁，请稍后重试")
+                    return
+                self.require_human_form(payload)
+                nickname = clean_public_text(str(payload.get("nickname", "")), "称呼", 1, 30)
+                content = clean_public_text(str(payload.get("content", "")), "评论内容", 4, 800)
+                comment_id = f"comment-{uuid.uuid4().hex}"
+                with database() as connection:
+                    connection.execute(
+                        """INSERT INTO article_comments
+                           (id, article_slug, nickname, content, status, created_at)
+                           VALUES (?, ?, ?, ?, 'pending', ?)""",
+                        (comment_id, slug, nickname, content, utc_now()),
+                    )
+                self.json_response(HTTPStatus.CREATED, {"ok": True, "message": "评论已提交，审核通过后公开显示"})
+                return
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "互动数据保存失败，请稍后重试")
+                return
+
+        if path == "/contact":
+            try:
+                if not check_rate(self.client_key(), "contact", 3, 3600):
+                    self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "提交过于频繁，请稍后再试")
+                    return
+                payload = self.json_body()
+                self.require_human_form(payload)
+                if payload.get("privacyConfirmed") is not True:
+                    raise ValueError("请确认同意将联系方式用于本次合作沟通")
+                name = clean_private_text(str(payload.get("name", "")), "称呼", 1, 30)
+                method = str(payload.get("contactMethod", ""))
+                if method not in {"微信", "电话", "邮箱", "其他"}:
+                    raise ValueError("请选择联系方式类型")
+                contact_value = clean_private_text(str(payload.get("contactValue", "")), "联系方式", 3, 100)
+                requirement = clean_private_text(str(payload.get("requirement", "")), "需求说明", 10, 1500)
+                lead_id = f"lead-{uuid.uuid4().hex}"
+                now = utc_now()
+                with database() as connection:
+                    connection.execute(
+                        """INSERT INTO cooperation_leads
+                           (id, name, contact_method, contact_value, requirement, status, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, 'new', ?, ?)""",
+                        (lead_id, name, method, contact_value, requirement, now, now),
+                    )
+                self.json_response(HTTPStatus.CREATED, {"ok": True, "message": "合作需求已提交，小刘会在看到后与你联系"})
+                return
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "合作需求保存失败，请稍后重试")
+                return
+
         if path != "/admin/resumes":
             self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")
             return
@@ -296,6 +557,22 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        interaction_match = re.fullmatch(r"/admin/(comments|leads)/((?:comment|lead)-[a-f0-9]{32})", path)
+        if interaction_match:
+            if not self.require_admin():
+                return
+            kind, item_id = interaction_match.groups()
+            table = "article_comments" if kind == "comments" else "cooperation_leads"
+            try:
+                with database() as connection:
+                    cursor = connection.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
+                if cursor.rowcount != 1:
+                    self.error_response(HTTPStatus.NOT_FOUND, "记录不存在")
+                    return
+                self.json_response(HTTPStatus.OK, {"ok": True})
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "删除失败，请检查服务日志")
+            return
         match = re.fullmatch(r"/admin/resumes/([a-z0-9-]{12,80})", path)
         if not match:
             self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")
@@ -327,6 +604,46 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        comment_match = re.fullmatch(r"/admin/comments/(comment-[a-f0-9]{32})/approve", path)
+        if comment_match:
+            if not self.require_admin():
+                return
+            try:
+                with database() as connection:
+                    cursor = connection.execute(
+                        "UPDATE article_comments SET status = 'approved', approved_at = ? WHERE id = ?",
+                        (utc_now(), comment_match.group(1)),
+                    )
+                if cursor.rowcount != 1:
+                    self.error_response(HTTPStatus.NOT_FOUND, "评论不存在")
+                    return
+                self.json_response(HTTPStatus.OK, {"ok": True})
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "审核失败，请检查服务日志")
+            return
+        lead_match = re.fullmatch(r"/admin/leads/(lead-[a-f0-9]{32})/status", path)
+        if lead_match:
+            if not self.require_admin():
+                return
+            try:
+                payload = self.json_body()
+                status = str(payload.get("status", ""))
+                if status not in {"new", "contacted", "closed"}:
+                    raise ValueError("合作状态不正确")
+                with database() as connection:
+                    cursor = connection.execute(
+                        "UPDATE cooperation_leads SET status = ?, updated_at = ? WHERE id = ?",
+                        (status, utc_now(), lead_match.group(1)),
+                    )
+                if cursor.rowcount != 1:
+                    self.error_response(HTTPStatus.NOT_FOUND, "合作记录不存在")
+                    return
+                self.json_response(HTTPStatus.OK, {"ok": True})
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "更新失败，请检查服务日志")
+            return
         match = re.fullmatch(r"/admin/resumes/([a-z0-9-]{12,80})/current", path)
         if not match:
             self.error_response(HTTPStatus.NOT_FOUND, "接口不存在")

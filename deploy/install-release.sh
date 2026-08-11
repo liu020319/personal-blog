@@ -7,7 +7,7 @@ SERVICE_ROOT="/opt/personal-blog-resume"
 SERVICE_UNIT="/etc/systemd/system/personal-blog-resume.service"
 SERVICE_ENV="/etc/personal-blog-resume.env"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v2-${STAMP}"
+BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v4-${STAMP}"
 TOKEN_TEMP=""
 
 cleanup() {
@@ -51,7 +51,7 @@ for file in index.html 404.html rss.xml sitemap.xml robots.txt .nojekyll; do
   sudo install -m 0644 "${RELEASE_ROOT}/${file}" "${SITE_ROOT}/${file}"
 done
 
-echo "[5/8] 安装轻量简历管理服务"
+echo "[5/8] 安装轻量博客数据服务"
 sudo install -d -m 0755 "${SERVICE_ROOT}"
 sudo install -m 0755 "${RELEASE_ROOT}/resume-service/resume_service.py" "${SERVICE_ROOT}/resume_service.py"
 sudo install -m 0644 "${RELEASE_ROOT}/resume-service/personal-blog-resume.service" "${SERVICE_UNIT}"
@@ -67,13 +67,13 @@ fi
 sudo systemctl daemon-reload
 sudo systemctl enable --now personal-blog-resume
 
-echo "[6/8] 验证简历服务本机接口"
+echo "[6/8] 验证博客数据服务本机接口"
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if curl -fsS --connect-timeout 2 http://127.0.0.1:8091/health >/dev/null; then
     break
   fi
   if [[ "${attempt}" -eq 10 ]]; then
-    echo "简历服务启动失败，请检查：sudo journalctl -u personal-blog-resume -n 80 --no-pager" >&2
+    echo "博客数据服务启动失败，请检查：sudo journalctl -u personal-blog-resume -n 80 --no-pager" >&2
     exit 1
   fi
   sleep 1
@@ -90,10 +90,10 @@ curl -fsSL --connect-timeout 15 https://xiaoliudev.com/kanglian-cloud/ | grep -E
 
 echo "STATIC_AND_SERVICE_OK"
 echo "备份目录：${BACKUP_DIR}"
-if sudo nginx -T 2>&1 | grep -q 'location /resume-api/'; then
-  curl -fsS --connect-timeout 15 https://xiaoliudev.com/resume-api/health >/dev/null
-  echo "RESUME_API_PUBLIC_OK"
+if sudo nginx -T 2>&1 | grep -q 'location /blog-api/'; then
+  curl -fsS --connect-timeout 15 https://xiaoliudev.com/blog-api/health >/dev/null
+  echo "BLOG_API_PUBLIC_OK"
 else
-  echo "NEXT_STEP_REQUIRED：现有 HTTPS server 块还需要加入 deploy/nginx-resume-api-location.conf"
+  echo "NEXT_STEP_REQUIRED：现有 HTTPS server 块还需要加入 deploy/nginx-blog-api-location.conf"
 fi
 echo "管理口令查看命令：sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' ${SERVICE_ENV}"
