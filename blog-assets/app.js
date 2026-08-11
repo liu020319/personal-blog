@@ -233,6 +233,32 @@
     main.innerHTML = `<section class="page-hero projects-hero"><div class="shell"><p class="eyebrow">PROJECT SPACE</p><h1>项目空间</h1><p>这里集中展示我独立完成或深入参与的项目。线上项目提供直接入口，后续作品会持续加入。</p></div></section><section class="section page-section"><div class="shell"><div class="project-grid">${data.projects.map((project) => projectCard(project, false)).join('')}<article class="project-card project-coming"><div class="coming-plus">+</div><p class="eyebrow">NEXT PROJECT</p><h3>下一个项目</h3><p>预留的扩展位置。新增项目只需在 <code>blog-assets/data.js</code> 中增加名称、简介、技术栈和登录地址。</p></article></div><div class="project-note"><strong>关于项目入口</strong><p>点击“进入项目登录页”会在新窗口打开独立业务系统。博客不保存业务账号、密码或生产配置。</p></div></div></section>`;
   }
 
+  function openContactDialog({ tone = 'review', eyebrow = 'PLEASE CONFIRM', title, message, details = '', confirmLabel = '我知道了', cancelLabel = '' }) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.className = `contact-dialog contact-dialog-${tone}`;
+      dialog.innerHTML = `<div class="contact-dialog-panel"><div class="contact-dialog-mark" aria-hidden="true">${tone === 'success' ? '✓' : tone === 'error' ? '!' : '?'}</div><p class="eyebrow">${escapeHtml(eyebrow)}</p><h2>${escapeHtml(title)}</h2><p class="contact-dialog-copy">${escapeHtml(message)}</p>${details}<div class="contact-dialog-actions">${cancelLabel ? `<button class="secondary-button contact-dialog-cancel" type="button">${escapeHtml(cancelLabel)}</button>` : ''}<button class="primary-button contact-dialog-confirm" type="button">${escapeHtml(confirmLabel)}</button></div></div>`;
+      document.body.appendChild(dialog);
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        dialog.close();
+        resolve(value);
+      };
+      dialog.querySelector('.contact-dialog-confirm').addEventListener('click', () => finish(true));
+      dialog.querySelector('.contact-dialog-cancel')?.addEventListener('click', () => finish(false));
+      dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(!cancelLabel); });
+      dialog.addEventListener('click', (event) => { if (event.target === dialog) finish(!cancelLabel); });
+      dialog.addEventListener('close', () => {
+        if (!settled) { settled = true; resolve(false); }
+        dialog.remove();
+      }, { once: true });
+      dialog.showModal();
+      window.setTimeout(() => (dialog.querySelector('.contact-dialog-cancel') || dialog.querySelector('.contact-dialog-confirm')).focus(), 30);
+    });
+  }
+
   function renderServices() {
     main.innerHTML = `<section class="page-hero services-hero"><div class="shell"><p class="eyebrow">WORK WITH ME</p><h1>合作服务</h1><p>无论是第一次把想法做成完整项目，还是已有系统需要继续开发，都会先把目标、范围、时间和验收方式说清楚。</p></div></section>
     <section class="section services-main"><div class="shell"><div class="service-grid detailed">${data.services.map((service) => serviceCard(service, true)).join('')}</div></div></section>
@@ -245,7 +271,20 @@
       event.preventDefault();
       const message = contactForm.querySelector('.form-message');
       const button = contactForm.querySelector('[type="submit"]');
-      const confirmed = window.confirm('确认提交合作需求吗？\n\n提交后，小刘会在管理中心看到你填写的联系方式和需求说明。');
+      const form = new FormData(contactForm);
+      const name = String(form.get('name') || '');
+      const contactMethod = String(form.get('contactMethod') || '');
+      const contactValue = String(form.get('contactValue') || '');
+      const requirement = String(form.get('requirement') || '');
+      const reviewDetails = `<dl class="contact-review"><div><dt>怎么称呼你</dt><dd>${escapeHtml(name)}</dd></div><div><dt>联系方式</dt><dd><span>${escapeHtml(contactMethod)}</span>${escapeHtml(contactValue)}</dd></div><div class="contact-review-requirement"><dt>需求说明</dt><dd>${escapeHtml(requirement)}</dd></div></dl>`;
+      const confirmed = await openContactDialog({
+        tone: 'review',
+        title: '请确认合作信息',
+        message: '请检查以下内容，确认无误后再提交。联系方式和需求说明仅在小刘的管理中心可见。',
+        details: reviewDetails,
+        confirmLabel: '确认并提交',
+        cancelLabel: '返回修改'
+      });
       if (!confirmed) {
         message.dataset.type = 'info';
         message.textContent = '已取消提交，填写的内容仍然保留。';
@@ -253,14 +292,13 @@
       }
       button.disabled = true; message.dataset.type = 'info'; message.textContent = '正在安全提交…';
       try {
-        const form = new FormData(contactForm);
-        const result = await window.BlogInteractions.contact({ name: form.get('name'), contactMethod: form.get('contactMethod'), contactValue: form.get('contactValue'), requirement: form.get('requirement'), privacyConfirmed: form.get('privacyConfirmed') === 'on', website: form.get('website'), startedAt: Number(contactForm.dataset.startedAt) });
+        const result = await window.BlogInteractions.contact({ name, contactMethod, contactValue, requirement, privacyConfirmed: form.get('privacyConfirmed') === 'on', website: form.get('website'), startedAt: Number(contactForm.dataset.startedAt) });
         message.dataset.type = 'success'; message.textContent = result.message;
         contactForm.reset(); contactForm.dataset.startedAt = String(Date.now());
-        window.alert('提交成功！\n\n合作需求已经发送给小刘，他会在看到后与你联系。');
+        await openContactDialog({ tone: 'success', eyebrow: 'SUBMITTED', title: '提交成功', message: result.message, confirmLabel: '我知道了' });
       } catch (error) {
         message.dataset.type = 'error'; message.textContent = error.message || '提交失败，请稍后重试。';
-        window.alert(`提交失败！\n\n${message.textContent}`);
+        await openContactDialog({ tone: 'error', eyebrow: 'SUBMIT FAILED', title: '提交失败', message: message.textContent, confirmLabel: '返回检查' });
       } finally { button.disabled = false; }
     });
   }
