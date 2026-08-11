@@ -7,6 +7,7 @@
   const rootUrl = window.location.href.split('#')[0];
   let aboutRotationTimer = null;
   let aboutRotationSwapTimer = null;
+  let aboutResizeHandler = null;
   const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
   const stripHtml = (value) => String(value).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const formatDate = (date) => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${date}T00:00:00`));
@@ -290,16 +291,64 @@
 
   function renderAbout() {
     const phrases = ['欢迎来到小刘的博客。', '代码之外，记录成长。', '认真写代码，踏实做项目。', '从问题出发，把事情做成。', '保持好奇，持续成长。', '把问题想清楚，再动手。', '一路开发，一路记录。'];
-    main.innerHTML = `<section class="page-hero about-hero"><div class="shell about-intro"><div><p class="eyebrow">ABOUT ME</p><h1 class="about-rotating-title" aria-label="关于小刘的个人博客"><span id="about-rotating-text" aria-hidden="true">${phrases[0]}</span></h1><p>${escapeHtml(data.profile.intro)}</p><div class="about-actions"><a class="primary-button" href="${escapeHtml(data.profile.github)}" target="_blank" rel="noreferrer">访问 GitHub ${icon('external')}</a><a class="secondary-button" href="#/resume">查看简历</a></div></div><div class="portrait-card"><span>XL</span><p>${escapeHtml(data.profile.role)}</p><small>${escapeHtml(data.profile.location)}</small></div></div></section><section class="section page-section"><div class="shell about-grid"><div><p class="eyebrow">FOCUS</p><h2>我关注的方向</h2></div><div class="about-content"><p class="large-copy">以 Java 后端为主线，同时具备 Vue 前端落地能力。我更关心系统是否真正解决业务问题，以及数据在整个流程中是否准确、可追溯。</p><div class="skill-grid"><article><span>01</span><h3>后端开发</h3><p>Spring Boot、REST API、权限、事务、业务状态和异常处理。</p></article><article><span>02</span><h3>数据与分析</h3><p>MySQL、SQL 查询、数据口径、报表和问题定位。</p></article><article><span>03</span><h3>前端交付</h3><p>Vue 3、响应式界面、后台工作台和业务交互。</p></article><article><span>04</span><h3>部署与验证</h3><p>Nginx、Linux、备份、发布检查和故障排查。</p></article></div></div></div></section>`;
+    main.innerHTML = `<section class="page-hero about-hero"><div class="shell about-intro"><div><p class="eyebrow">ABOUT ME</p><h1 class="about-rotating-title" aria-label="${phrases[0]}"><span id="about-rotating-text" aria-live="off"></span></h1><p>${escapeHtml(data.profile.intro)}</p><div class="about-actions"><a class="primary-button" href="${escapeHtml(data.profile.github)}" target="_blank" rel="noreferrer">访问 GitHub ${icon('external')}</a><a class="secondary-button" href="#/resume">查看简历</a></div></div><div class="portrait-card"><span>XL</span><p>${escapeHtml(data.profile.role)}</p><small>${escapeHtml(data.profile.location)}</small></div></div></section><section class="section page-section"><div class="shell about-grid"><div><p class="eyebrow">FOCUS</p><h2>我关注的方向</h2></div><div class="about-content"><p class="large-copy">以 Java 后端为主线，同时具备 Vue 前端落地能力。我更关心系统是否真正解决业务问题，以及数据在整个流程中是否准确、可追溯。</p><div class="skill-grid"><article><span>01</span><h3>后端开发</h3><p>Spring Boot、REST API、权限、事务、业务状态和异常处理。</p></article><article><span>02</span><h3>数据与分析</h3><p>MySQL、SQL 查询、数据口径、报表和问题定位。</p></article><article><span>03</span><h3>前端交付</h3><p>Vue 3、响应式界面、后台工作台和业务交互。</p></article><article><span>04</span><h3>部署与验证</h3><p>Nginx、Linux、备份、发布检查和故障排查。</p></article></div></div></div></section>`;
+    const rotatingTitle = document.querySelector('.about-rotating-title');
     const rotatingText = document.getElementById('about-rotating-text');
     let phraseIndex = 0;
+
+    const splitPhrase = (phrase) => {
+      const characters = Array.from(phrase);
+      if (characters.length <= 10) return [phrase];
+      const middle = characters.length / 2;
+      const punctuation = characters
+        .map((character, index) => ('，；：！？'.includes(character) ? index + 1 : 0))
+        .filter((index) => index > 0 && index < characters.length);
+      const splitAt = punctuation.length
+        ? punctuation.sort((a, b) => Math.abs(a - middle) - Math.abs(b - middle))[0]
+        : Math.ceil(middle);
+      const firstLine = characters.slice(0, splitAt);
+      const lastLine = characters.slice(splitAt);
+      return lastLine.length >= Math.ceil(firstLine.length / 3)
+        ? [firstLine.join(''), lastLine.join('')]
+        : [phrase];
+    };
+
+    const fitTitle = () => {
+      if (!rotatingTitle?.isConnected) return;
+      const lines = [...rotatingText.querySelectorAll('.about-title-line')];
+      if (!lines.length) return;
+      const maximumSize = window.matchMedia('(max-width: 620px)').matches ? 56 : 92;
+      rotatingTitle.style.fontSize = `${maximumSize}px`;
+      const widestLine = Math.max(...lines.map((line) => line.scrollWidth));
+      const widthScale = (rotatingTitle.clientWidth - 2) / Math.max(widestLine, 1);
+      const heightScale = rotatingTitle.clientHeight / Math.max(maximumSize * lines.length, 1);
+      const fittedSize = Math.max(28, Math.floor(maximumSize * Math.min(1, widthScale, heightScale)));
+      rotatingTitle.style.fontSize = `${fittedSize}px`;
+    };
+
+    const showPhrase = (phrase) => {
+      const lineElements = splitPhrase(phrase).map((line) => {
+        const element = document.createElement('span');
+        element.className = 'about-title-line';
+        element.textContent = line;
+        return element;
+      });
+      rotatingText.replaceChildren(...lineElements);
+      rotatingTitle.setAttribute('aria-label', phrase);
+      window.requestAnimationFrame(fitTitle);
+    };
+
+    showPhrase(phrases[0]);
+    document.fonts?.ready?.then(fitTitle);
+    aboutResizeHandler = () => window.requestAnimationFrame(fitTitle);
+    window.addEventListener('resize', aboutResizeHandler, { passive: true });
     aboutRotationTimer = window.setInterval(() => {
       if (!rotatingText?.isConnected) return;
       rotatingText.classList.add('is-changing');
       aboutRotationSwapTimer = window.setTimeout(() => {
         if (!rotatingText.isConnected) return;
         phraseIndex = (phraseIndex + 1) % phrases.length;
-        rotatingText.textContent = phrases[phraseIndex];
+        showPhrase(phrases[phraseIndex]);
         window.requestAnimationFrame(() => rotatingText.classList.remove('is-changing'));
       }, 260);
     }, 4500);
@@ -408,8 +457,10 @@
   function route() {
     window.clearInterval(aboutRotationTimer);
     window.clearTimeout(aboutRotationSwapTimer);
+    if (aboutResizeHandler) window.removeEventListener('resize', aboutResizeHandler);
     aboutRotationTimer = null;
     aboutRotationSwapTimer = null;
+    aboutResizeHandler = null;
     window.scrollTo(0, 0);
     document.title = '小刘 · 个人技术博客';
     document.body.classList.toggle('is-article', routeParts()[0] === 'article');

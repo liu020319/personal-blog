@@ -1,4 +1,4 @@
-# xiaoliudev.com 博客 V7 发布说明
+# xiaoliudev.com 博客 V8 发布说明
 
 ## 最终访问关系
 
@@ -14,27 +14,27 @@
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260811-v7.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260811-v8.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260811-v7.zip
+/home/xiaoliu/personal-blog-release-20260811-v8.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260811-v7
-unzip -q /home/xiaoliu/personal-blog-release-20260811-v7.zip \
-  -d /home/xiaoliu/personal-blog-release-20260811-v7
+mkdir -p /home/xiaoliu/personal-blog-release-20260811-v8
+unzip -q /home/xiaoliu/personal-blog-release-20260811-v8.zip \
+  -d /home/xiaoliu/personal-blog-release-20260811-v8
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260811-v7/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260811-v8/deploy/install-release.sh
 ```
 
 脚本会：
