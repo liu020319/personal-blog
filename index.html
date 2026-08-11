@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="小刘的个人技术博客，记录 Java 后端、Vue 全栈实践、系统设计、项目复盘与简历成长轨迹。" />
+    <meta name="keywords" content="小刘,Java,Spring Boot,Vue,MySQL,个人博客,项目作品,简历" />
+    <meta name="author" content="小刘" />
+    <meta name="theme-color" content="#f7f4ed" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="小刘 · 把复杂系统做得清楚可靠" />
+    <meta property="og:description" content="Java 后端开发者的技术文章、项目实践与成长记录。" />
+    <meta property="og:url" content="https://xiaoliudev.com/" />
+    <link rel="icon" href="./blog-assets/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" type="application/rss+xml" title="小刘的博客 RSS" href="./rss.xml" />
+    <link rel="stylesheet" href="./blog-assets/styles.css" />
+    <title>小刘 · 个人技术博客</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+    <div class="reading-progress" id="reading-progress" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="#/" aria-label="返回首页">
+          <span class="brand-mark">XL</span>
+          <span class="brand-copy"><strong>小刘</strong><small>BUILD · WRITE · GROW</small></span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="主导航">
+          <a href="#/">首页</a>
+          <a href="#/articles">文章</a>
+          <a href="#/archive">归档</a>
+          <a href="#/projects">项目空间</a>
+          <a href="#/resume">简历仓库</a>
+          <a href="#/about">关于我</a>
+        </nav>
+
+        <div class="header-actions">
+          <button class="icon-button" id="search-button" type="button" aria-label="搜索文章" title="搜索（Ctrl/⌘ + K）">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" /></svg>
+          </button>
+          <button class="icon-button" id="theme-button" type="button" aria-label="切换深浅主题" title="切换主题">
+            <svg class="theme-sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></svg>
+          </button>
+          <button class="icon-button menu-button" id="menu-button" type="button" aria-label="打开菜单" aria-expanded="false">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
+        </div>
+      </div>
+      <nav class="mobile-nav" id="mobile-nav" aria-label="移动端导航" hidden>
+        <a href="#/">首页</a><a href="#/articles">文章</a><a href="#/archive">归档</a><a href="#/projects">项目空间</a><a href="#/resume">简历仓库</a><a href="#/about">关于我</a>
+      </nav>
+    </header>
+
+    <main id="main-content" tabindex="-1"></main>
+
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="footer-brand" href="#/">小刘 · 个人技术博客</a>
+          <p>认真写代码，也认真记录为什么这样写。</p>
+        </div>
+        <div class="footer-links" aria-label="页脚导航">
+          <a href="#/articles">文章</a>
+          <a href="#/projects">项目空间</a>
+          <a href="#/resume">简历仓库</a>
+          <a href="https://github.com/liu020319" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="./rss.xml">RSS</a>
+        </div>
+      </div>
+      <div class="shell footer-bottom">
+        <span>© <span id="current-year"></span> 小刘</span>
+        <span>纯静态构建 · 轻量、安全、易维护</span>
+      </div>
+    </footer>
+
+    <dialog class="search-dialog" id="search-dialog">
+      <form method="dialog" class="search-panel">
+        <div class="search-head">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" /></svg>
+          <input id="search-input" type="search" placeholder="搜索标题、摘要、标签或正文…" autocomplete="off" aria-label="搜索文章" />
+          <button value="cancel" aria-label="关闭搜索">ESC</button>
+        </div>
+        <div class="search-results" id="search-results" aria-live="polite"></div>
+      </form>
+    </dialog>
+
+    <button class="back-to-top" id="back-to-top" type="button" aria-label="返回顶部">↑</button>
+
+    <noscript><div class="noscript">本站需要启用 JavaScript 才能浏览文章与项目。</div></noscript>
+    <script src="./blog-assets/data.js"></script>
+    <script src="./blog-assets/app.js"></script>
+  </body>
+</html>
