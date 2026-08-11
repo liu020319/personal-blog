@@ -245,14 +245,22 @@
       event.preventDefault();
       const message = contactForm.querySelector('.form-message');
       const button = contactForm.querySelector('[type="submit"]');
+      const confirmed = window.confirm('确认提交合作需求吗？\n\n提交后，小刘会在管理中心看到你填写的联系方式和需求说明。');
+      if (!confirmed) {
+        message.dataset.type = 'info';
+        message.textContent = '已取消提交，填写的内容仍然保留。';
+        return;
+      }
       button.disabled = true; message.dataset.type = 'info'; message.textContent = '正在安全提交…';
       try {
         const form = new FormData(contactForm);
         const result = await window.BlogInteractions.contact({ name: form.get('name'), contactMethod: form.get('contactMethod'), contactValue: form.get('contactValue'), requirement: form.get('requirement'), privacyConfirmed: form.get('privacyConfirmed') === 'on', website: form.get('website'), startedAt: Number(contactForm.dataset.startedAt) });
         message.dataset.type = 'success'; message.textContent = result.message;
         contactForm.reset(); contactForm.dataset.startedAt = String(Date.now());
+        window.alert('提交成功！\n\n合作需求已经发送给小刘，他会在看到后与你联系。');
       } catch (error) {
         message.dataset.type = 'error'; message.textContent = error.message || '提交失败，请稍后重试。';
+        window.alert(`提交失败！\n\n${message.textContent}`);
       } finally { button.disabled = false; }
     });
   }

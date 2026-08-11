@@ -7,7 +7,7 @@ SERVICE_ROOT="/opt/personal-blog-resume"
 SERVICE_UNIT="/etc/systemd/system/personal-blog-resume.service"
 SERVICE_ENV="/etc/personal-blog-resume.env"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v8-${STAMP}"
+BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v9-${STAMP}"
 TOKEN_TEMP=""
 
 cleanup() {
