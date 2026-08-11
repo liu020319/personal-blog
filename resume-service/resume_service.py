@@ -117,6 +117,23 @@ def initialize_database() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_leads_status
               ON cooperation_leads(status, created_at);
+            CREATE TABLE IF NOT EXISTS published_articles (
+              slug TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              excerpt TEXT NOT NULL,
+              category TEXT NOT NULL,
+              tags_json TEXT NOT NULL,
+              content_text TEXT NOT NULL,
+              published_date TEXT NOT NULL,
+              reading_minutes INTEGER NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_published_articles_date
+              ON published_articles(published_date DESC, created_at DESC);
+            CREATE TABLE IF NOT EXISTS hidden_articles (
+              slug TEXT PRIMARY KEY,
+              hidden_at TEXT NOT NULL
+            );
             """
         )
 
@@ -150,10 +167,45 @@ def clean_private_text(value: str, field: str, minimum: int, maximum: int) -> st
     return cleaned
 
 
+def clean_article_content(value: str) -> str:
+    cleaned = value.replace("\x00", " ").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not 20 <= len(cleaned) <= 30000:
+        raise ValueError("文章正文长度应为 20-30000 个字符")
+    return cleaned
+
+
 def valid_article_slug(value: str) -> str:
     if not ARTICLE_SLUG_RE.fullmatch(value):
         raise ValueError("文章标识不正确")
     return value
+
+
+def public_article(row: sqlite3.Row) -> dict:
+    tags = json.loads(row["tags_json"])
+    return {
+        "slug": row["slug"],
+        "title": row["title"],
+        "excerpt": row["excerpt"],
+        "category": row["category"],
+        "tags": tags if isinstance(tags, list) else [],
+        "contentText": row["content_text"],
+        "date": row["published_date"],
+        "readingMinutes": row["reading_minutes"],
+        "createdAt": row["created_at"],
+    }
+
+
+def clean_article_tags(value: object) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("文章标签格式不正确")
+    tags: list[str] = []
+    for item in value:
+        tag = clean_private_text(str(item), "文章标签", 1, 20)
+        if tag not in tags:
+            tags.append(tag)
+    if not 1 <= len(tags) <= 8:
+        raise ValueError("文章标签需要填写 1-8 个")
+    return tags
 
 
 def atomic_write_json(items: list[dict]) -> None:
@@ -339,6 +391,25 @@ class ResumeHandler(BaseHTTPRequestHandler):
                 if self.require_admin():
                     self.json_response(HTTPStatus.OK, {"ok": True})
                 return
+            if path == "/articles":
+                with database() as connection:
+                    rows = connection.execute(
+                        """SELECT slug, title, excerpt, category, tags_json, content_text,
+                                  published_date, reading_minutes, created_at
+                           FROM published_articles
+                           ORDER BY published_date DESC, created_at DESC
+                           LIMIT 500"""
+                    ).fetchall()
+                    hidden_rows = connection.execute("SELECT slug FROM hidden_articles").fetchall()
+                self.json_response(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "items": [public_article(row) for row in rows],
+                        "hiddenSlugs": [row["slug"] for row in hidden_rows],
+                    },
+                )
+                return
             interaction_match = re.fullmatch(r"/articles/([a-z0-9-]{2,100})/interaction", path)
             if interaction_match:
                 slug = valid_article_slug(interaction_match.group(1))
@@ -426,6 +497,50 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        if path == "/admin/articles":
+            if not self.require_admin():
+                return
+            try:
+                payload = self.json_body(maximum=40 * 1024)
+                title = clean_private_text(str(payload.get("title", "")), "文章标题", 2, 100)
+                excerpt = clean_private_text(str(payload.get("excerpt", "")), "文章摘要", 10, 300)
+                category = clean_private_text(str(payload.get("category", "")), "文章分类", 2, 30)
+                tags = clean_article_tags(payload.get("tags"))
+                content = clean_article_content(str(payload.get("content", "")))
+                published_date = date.today().isoformat()
+                slug = f"article-{published_date.replace('-', '')}-{uuid.uuid4().hex[:12]}"
+                reading_minutes = max(1, min(60, (len(content) + 499) // 500))
+                created_at = utc_now()
+                with database() as connection:
+                    connection.execute(
+                        """INSERT INTO published_articles
+                           (slug, title, excerpt, category, tags_json, content_text,
+                            published_date, reading_minutes, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            slug,
+                            title,
+                            excerpt,
+                            category,
+                            json.dumps(tags, ensure_ascii=False),
+                            content,
+                            published_date,
+                            reading_minutes,
+                            created_at,
+                        ),
+                    )
+                    row = connection.execute(
+                        """SELECT slug, title, excerpt, category, tags_json, content_text,
+                                  published_date, reading_minutes, created_at
+                           FROM published_articles WHERE slug = ?""",
+                        (slug,),
+                    ).fetchone()
+                self.json_response(HTTPStatus.CREATED, {"ok": True, "item": public_article(row)})
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "文章保存失败，请检查服务日志")
+            return
         interaction_match = re.fullmatch(r"/articles/([a-z0-9-]{2,100})/(likes|comments)", path)
         if interaction_match:
             slug = interaction_match.group(1)
@@ -557,6 +672,22 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        article_match = re.fullmatch(r"/admin/articles/([a-z0-9-]{2,100})", path)
+        if article_match:
+            if not self.require_admin():
+                return
+            try:
+                slug = valid_article_slug(article_match.group(1))
+                with database() as connection:
+                    connection.execute("DELETE FROM published_articles WHERE slug = ?", (slug,))
+                    connection.execute(
+                        "INSERT OR REPLACE INTO hidden_articles (slug, hidden_at) VALUES (?, ?)",
+                        (slug, utc_now()),
+                    )
+                self.json_response(HTTPStatus.OK, {"ok": True})
+            except (ValueError, sqlite3.Error):
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "文章删除失败，请检查服务日志")
+            return
         interaction_match = re.fullmatch(r"/admin/(comments|leads)/((?:comment|lead)-[a-f0-9]{32})", path)
         if interaction_match:
             if not self.require_admin():

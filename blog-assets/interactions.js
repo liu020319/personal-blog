@@ -43,6 +43,7 @@
   }
 
   const interaction = (slug) => request(`/articles/${encodeURIComponent(slug)}/interaction`);
+  const articles = () => request('/articles');
   const like = (slug) => request(`/articles/${encodeURIComponent(slug)}/likes`, jsonOptions({ visitorId: visitorId() }));
   const comment = (slug, payload) => request(`/articles/${encodeURIComponent(slug)}/comments`, jsonOptions(payload));
   const contact = (payload) => request('/contact', jsonOptions(payload));
@@ -64,9 +65,12 @@
   const adminLeads = (status = 'all') => adminRequest(`/admin/leads?status=${encodeURIComponent(status)}`);
   const setLeadStatus = (id, status) => adminRequest(`/admin/leads/${encodeURIComponent(id)}/status`, jsonOptions({ status }, 'PUT', true));
   const deleteLead = (id) => adminRequest(`/admin/leads/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const createArticle = (payload) => adminRequest('/admin/articles', jsonOptions(payload, 'POST', true));
+  const deleteArticle = (slug) => adminRequest(`/admin/articles/${encodeURIComponent(slug)}`, { method: 'DELETE' });
 
   window.BlogInteractions = {
     InteractionError,
+    articles,
     interaction,
     like,
     comment,
@@ -76,6 +80,8 @@
     deleteComment,
     adminLeads,
     setLeadStatus,
-    deleteLead
+    deleteLead,
+    createArticle,
+    deleteArticle
   };
 })();

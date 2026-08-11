@@ -2,6 +2,7 @@
   'use strict';
 
   const data = window.BLOG_DATA;
+  const builtInPosts = [...data.posts];
   const main = document.getElementById('main-content');
   const rootUrl = window.location.href.split('#')[0];
   const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -9,7 +10,90 @@
   const formatDate = (date) => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${date}T00:00:00`));
   const formatDateTime = (value) => new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
   const getTags = () => [...new Set(data.posts.flatMap((post) => post.tags))];
+  const sortPosts = (posts) => [...posts].sort((a, b) => {
+    const byTime = String(b.createdAt || `${b.date}T00:00:00`).localeCompare(String(a.createdAt || `${a.date}T00:00:00`));
+    return byTime || b.date.localeCompare(a.date);
+  });
   const routeParts = () => (location.hash.slice(2).split('?')[0] || '').split('/').filter(Boolean).map(decodeURIComponent);
+
+  function renderPublishedContent(value) {
+    const html = [];
+    let paragraph = [];
+    let list = [];
+    let code = [];
+    let inCode = false;
+    let headingIndex = 0;
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
+      html.push(`<p>${paragraph.map(escapeHtml).join('<br>')}</p>`);
+      paragraph = [];
+    };
+    const flushList = () => {
+      if (!list.length) return;
+      html.push(`<ul>${list.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`);
+      list = [];
+    };
+    const flushCode = () => {
+      html.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+      code = [];
+    };
+    String(value || '').replace(/\r\n?/g, '\n').split('\n').forEach((line) => {
+      if (line.trim().startsWith('```')) {
+        if (inCode) flushCode();
+        else { flushParagraph(); flushList(); }
+        inCode = !inCode;
+        return;
+      }
+      if (inCode) { code.push(line); return; }
+      const heading = line.match(/^##\s+(.+)$/);
+      if (heading) {
+        flushParagraph(); flushList(); headingIndex += 1;
+        html.push(`<h2 id="published-section-${headingIndex}">${escapeHtml(heading[1].trim())}</h2>`);
+        return;
+      }
+      const subheading = line.match(/^###\s+(.+)$/);
+      if (subheading) {
+        flushParagraph(); flushList();
+        html.push(`<h3>${escapeHtml(subheading[1].trim())}</h3>`);
+        return;
+      }
+      const listItem = line.match(/^[-*]\s+(.+)$/);
+      if (listItem) { flushParagraph(); list.push(listItem[1].trim()); return; }
+      if (!line.trim()) { flushParagraph(); flushList(); return; }
+      flushList(); paragraph.push(line.trim());
+    });
+    flushParagraph(); flushList();
+    if (inCode || code.length) flushCode();
+    return html.join('');
+  }
+
+  function publishedItemToPost(item) {
+    return {
+      slug: item.slug,
+      title: item.title,
+      excerpt: item.excerpt,
+      date: item.date,
+      category: item.category,
+      tags: Array.isArray(item.tags) ? item.tags : [],
+      readingMinutes: Number(item.readingMinutes) || 1,
+      createdAt: item.createdAt || '',
+      featured: false,
+      publishedByAdmin: true,
+      content: renderPublishedContent(item.contentText)
+    };
+  }
+
+  async function loadPublishedArticles() {
+    try {
+      const result = await window.BlogInteractions.articles();
+      const hiddenSlugs = new Set(result.hiddenSlugs || []);
+      const builtInSlugs = new Set(builtInPosts.map((post) => post.slug));
+      const published = (result.items || []).filter((item) => !builtInSlugs.has(item.slug)).map(publishedItemToPost);
+      data.posts = sortPosts([...published, ...builtInPosts.filter((post) => !hiddenSlugs.has(post.slug))]);
+    } catch (_) {
+      data.posts = sortPosts(builtInPosts);
+    }
+  }
 
   function icon(name) {
     const icons = {
@@ -20,12 +104,13 @@
     return icons[name] || '';
   }
 
-  function postCard(post) {
+  function postCard(post, adminMode = false) {
+    const publishedAt = post.createdAt ? formatDateTime(post.createdAt) : formatDate(post.date);
     return `<article class="post-card">
-      <div class="post-meta"><span>${escapeHtml(post.category)}</span><time datetime="${post.date}">${formatDate(post.date)}</time><span>${post.readingMinutes} 分钟</span></div>
+      <div class="post-meta"><span>${escapeHtml(post.category)}</span><time datetime="${escapeHtml(post.createdAt || post.date)}">${publishedAt}</time><span>${post.readingMinutes} 分钟</span></div>
       <h3><a href="#/article/${encodeURIComponent(post.slug)}">${escapeHtml(post.title)}</a></h3>
       <p>${escapeHtml(post.excerpt)}</p>
-      <div class="post-card-bottom"><div class="tag-list">${post.tags.map((tag) => `<a href="#/articles?tag=${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a>`).join('')}</div><a class="text-link" href="#/article/${encodeURIComponent(post.slug)}">阅读全文 ${icon('arrow')}</a></div>
+      <div class="post-card-bottom"><div class="tag-list">${post.tags.map((tag) => `<a href="#/articles?tag=${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a>`).join('')}</div><div class="post-card-actions"><a class="text-link" href="#/article/${encodeURIComponent(post.slug)}">阅读全文 ${icon('arrow')}</a>${adminMode ? `<button class="text-button danger-text delete-article" type="button" data-article-slug="${escapeHtml(post.slug)}" data-article-title="${escapeHtml(post.title)}">删除文章</button>` : ''}</div></div>
     </article>`;
   }
 
@@ -49,7 +134,7 @@
 
   function renderHome() {
     const featured = data.projects.find((project) => project.featured) || data.projects[0];
-    const latest = [...data.posts].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
+    const latest = sortPosts(data.posts).slice(0, 3);
     main.innerHTML = `<section class="hero"><div class="shell hero-grid">
       <div class="hero-copy"><p class="eyebrow"><span></span> AVAILABLE FOR NEW OPPORTUNITIES</p><h1>把复杂系统<br>做得<span>清楚、可靠。</span></h1><p class="hero-intro">${escapeHtml(data.profile.intro)}</p><div class="hero-actions"><a class="primary-button" href="#/projects">查看我的项目 ${icon('arrow')}</a><a class="secondary-button" href="#/services">找我合作</a></div><div class="hero-notes"><span>Java / Spring Boot</span><span>Vue / MySQL</span><span>${escapeHtml(data.profile.location)}</span></div></div>
       <div class="hero-visual" aria-label="个人技术方向概览"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="code-window"><div class="window-head"><i></i><i></i><i></i><span>about.java</span></div><pre><code><b>public class</b> Developer {
@@ -65,15 +150,70 @@
     </div></section>
     <section class="section project-spotlight"><div class="shell"><div class="section-heading"><div><p class="eyebrow">FEATURED PROJECT</p><h2>项目不只展示截图，<br>也可以直接体验。</h2></div><p>每个项目拥有独立入口。点击卡片即可进入线上系统；以后新增项目，只需补充一项配置。</p></div>${projectCard(featured, true)}</div></section>
     <section class="section service-preview-section"><div class="shell"><div class="section-heading"><div><p class="eyebrow">WORK WITH ME</p><h2>有想法，可以一起<br>把它真正做出来。</h2></div><p>面向学生的项目陪跑与面向真实需求的开发兼职分别管理，先确认目标和边界，再进入开发与交付。</p></div><div class="service-grid">${data.services.map((service) => serviceCard(service)).join('')}</div></div></section>
-    <section class="section latest-section"><div class="shell"><div class="section-heading compact"><div><p class="eyebrow">LATEST WRITING</p><h2>最近文章</h2></div><a class="text-link" href="#/articles">浏览全部文章 ${icon('arrow')}</a></div><div class="post-list">${latest.map(postCard).join('')}</div></div></section>
+    <section class="section latest-section"><div class="shell"><div class="section-heading compact"><div><p class="eyebrow">LATEST WRITING</p><h2>最近文章</h2></div><a class="text-link" href="#/articles">浏览全部文章 ${icon('arrow')}</a></div><div class="post-list">${latest.map((post) => postCard(post)).join('')}</div></div></section>
     <section class="section principles"><div class="shell principles-grid"><div><p class="eyebrow">HOW I WORK</p><h2>我的工作方式</h2></div><div class="principle-list"><article><span>01</span><div><h3>先理解业务，再设计代码</h3><p>把角色、状态和边界说清楚，避免用更多代码掩盖需求问题。</p></div></article><article><span>02</span><div><h3>用证据完成验证</h3><p>构建成功、服务运行、业务可用是三件事，每一步都保留清晰边界。</p></div></article><article><span>03</span><div><h3>让复杂度有明确价值</h3><p>选择满足当前规模的方案，同时为下一次扩展留下清楚入口。</p></div></article></div></div></section>`;
+  }
+
+  function openArticleEditor() {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'article-editor-dialog';
+    dialog.innerHTML = `<form class="article-editor-panel" id="article-editor-form">
+      <div class="article-editor-head"><div><p class="eyebrow">NEW ARTICLE</p><h2>创建文章</h2></div><button class="dialog-close" type="button" aria-label="关闭">×</button></div>
+      <div class="form-grid"><label class="field-label field-wide">标题<input name="title" minlength="2" maxlength="100" required placeholder="文章标题" /></label><label class="field-label field-wide">摘要<textarea name="excerpt" minlength="10" maxlength="300" rows="3" required placeholder="文章列表中显示的一段简介"></textarea></label><label class="field-label">文章栏目<input name="category" minlength="2" maxlength="30" required placeholder="例如：工程实践" /></label><label class="field-label">左侧分类标签<input name="tags" maxlength="160" required placeholder="例如：Java, Spring Boot" /></label><label class="field-label field-wide">正文<textarea name="content" minlength="20" maxlength="30000" rows="16" required placeholder="直接写正文。章节标题单独一行并以 ## 开头，例如：&#10;&#10;## 问题背景&#10;&#10;这里写正文内容。"></textarea></label></div>
+      <p class="article-editor-help">左侧分类标签使用逗号分隔；发布时间和阅读时间由系统自动生成；正文中的“## 章节标题”会自动生成本文目录。</p>
+      <p class="form-message" aria-live="polite"></p>
+      <div class="dialog-actions"><button class="secondary-button cancel-article" type="button">取消</button><button class="primary-button" type="submit">保存并发布</button></div>
+    </form>`;
+    document.body.appendChild(dialog);
+    const form = dialog.querySelector('form');
+    const close = () => dialog.close();
+    dialog.querySelector('.dialog-close').addEventListener('click', close);
+    dialog.querySelector('.cancel-article').addEventListener('click', close);
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = form.querySelector('.form-message');
+      const button = form.querySelector('[type="submit"]');
+      const values = new FormData(form);
+      const tags = String(values.get('tags') || '').split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
+      button.disabled = true; message.dataset.type = 'info'; message.textContent = '正在发布…';
+      try {
+        const result = await window.BlogInteractions.createArticle({ title: values.get('title'), excerpt: values.get('excerpt'), category: values.get('category'), tags, content: values.get('content') });
+        const post = publishedItemToPost(result.item);
+        data.posts = sortPosts([post, ...data.posts.filter((item) => item.slug !== post.slug)]);
+        close();
+        location.hash = `#/article/${encodeURIComponent(post.slug)}`;
+      } catch (error) {
+        message.dataset.type = 'error'; message.textContent = error.message || '发布失败，请稍后重试。';
+        button.disabled = false;
+      }
+    });
+    dialog.showModal();
+    setTimeout(() => form.elements.title.focus(), 50);
   }
 
   function renderArticles() {
     const params = new URLSearchParams((location.hash.split('?')[1] || ''));
     const activeTag = params.get('tag') || '';
-    const posts = activeTag ? data.posts.filter((post) => post.tags.includes(activeTag)) : data.posts;
-    main.innerHTML = `<section class="page-hero"><div class="shell"><p class="eyebrow">WRITING</p><h1>技术文章</h1><p>记录项目实践、问题排查和工程选择。每篇文章都尽量讲清问题、判断和验证边界。</p></div></section><section class="section page-section"><div class="shell articles-layout"><aside class="filter-panel"><h2>按标签浏览</h2><a class="filter-tag ${!activeTag ? 'active' : ''}" href="#/articles">全部文章 <span>${data.posts.length}</span></a>${getTags().map((tag) => `<a class="filter-tag ${activeTag === tag ? 'active' : ''}" href="#/articles?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)} <span>${data.posts.filter((post) => post.tags.includes(tag)).length}</span></a>`).join('')}</aside><div><div class="result-heading"><span>${activeTag ? `标签：${escapeHtml(activeTag)}` : '全部文章'}</span><strong>${posts.length} 篇</strong></div><div class="post-list">${posts.length ? posts.map(postCard).join('') : '<div class="empty-state">这个标签下暂时没有文章。</div>'}</div></div></div></section>`;
+    const posts = sortPosts(activeTag ? data.posts.filter((post) => post.tags.includes(activeTag)) : data.posts);
+    const isAdmin = Boolean(window.ResumeRepository?.getToken());
+    const createButton = isAdmin ? '<button class="primary-button create-article-button" id="create-article" type="button">创建文章</button>' : '';
+    main.innerHTML = `<section class="page-hero"><div class="shell articles-hero-grid"><div><p class="eyebrow">WRITING</p><h1>技术文章</h1><p>记录项目实践、问题排查和工程选择。每篇文章都尽量讲清问题、判断和验证边界。</p></div>${createButton}</div></section><section class="section page-section"><div class="shell articles-layout"><aside class="filter-panel"><h2>按标签浏览</h2><a class="filter-tag ${!activeTag ? 'active' : ''}" href="#/articles">全部文章 <span>${data.posts.length}</span></a>${getTags().map((tag) => `<a class="filter-tag ${activeTag === tag ? 'active' : ''}" href="#/articles?tag=${encodeURIComponent(tag)}">${escapeHtml(tag)} <span>${data.posts.filter((post) => post.tags.includes(tag)).length}</span></a>`).join('')}</aside><div><div class="result-heading"><span>${activeTag ? `标签：${escapeHtml(activeTag)}` : '全部文章'}</span><strong>${posts.length} 篇</strong></div><div class="post-list">${posts.length ? posts.map((post) => postCard(post, isAdmin)).join('') : '<div class="empty-state">这个标签下暂时没有文章。</div>'}</div></div></div></section>`;
+    document.getElementById('create-article')?.addEventListener('click', openArticleEditor);
+    document.querySelectorAll('.delete-article').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (!window.confirm(`确定删除文章“${button.dataset.articleTitle}”吗？删除后访客将无法再看到。`)) return;
+        button.disabled = true;
+        try {
+          await window.BlogInteractions.deleteArticle(button.dataset.articleSlug);
+          data.posts = data.posts.filter((post) => post.slug !== button.dataset.articleSlug);
+          renderArticles();
+        } catch (error) {
+          button.disabled = false;
+          window.alert(error.message || '删除失败，请稍后重试。');
+        }
+      });
+    });
   }
 
   function renderArchive() {
@@ -133,7 +273,7 @@
     ${result.online ? '' : '<section class="service-notice"><div class="shell"><strong>简历服务尚未连接</strong><span>静态页面已经就绪，完成服务器端简历服务部署后即可上传和删除。</span></div></section>'}
     <section class="section resume-current"><div class="shell"><div class="section-heading"><div><p class="eyebrow">CURRENT RESUME</p><h2>当前公开简历</h2></div><p>公开区不预置示例文件，只展示你亲自上传并确认可以公开的真实历史版本。</p></div>${currentBlock}</div></section>
     <section class="section resume-history"><div class="shell resume-history-grid"><div class="resume-history-heading"><p class="eyebrow">VERSION HISTORY</p><h2>成长时间线</h2><p>每份文件独立保存。你可以上传、设为当前版或删除，旧版本不会被新文件覆盖。</p></div><div class="resume-timeline">${timeline}</div></div></section>
-    <section class="section resume-method"><div class="shell resume-method-grid"><div><p class="eyebrow">HOW IT WORKS</p><h2>上传前的三道检查</h2></div><ol><li><span>01</span><div><strong>保留原文件</strong><p>本地原始简历不做任何修改，博客保存单独的公开副本。</p></div></li><li><span>02</span><div><strong>完成脱敏</strong><p>删除真实姓名、私人联系方式、地址、账号密码以及不应公开的公司项目细节。</p></div></li><li><span>03</span><div><strong>记录阶段变化</strong><p>写清这版简历的定位、项目表达和能力重点发生了什么变化。</p></div></li></ol></div></section>`;
+    <section class="section resume-method"><div class="shell resume-method-grid"><div><p class="eyebrow">MY RESUME JOURNEY</p><h2>为什么保留这些旧简历</h2></div><ol><li><span>01</span><div><strong>刚毕业时的起点</strong><p>从第一份求职简历开始保留，记下当时掌握的技能和做过的项目。</p></div></li><li><span>02</span><div><strong>工作后的变化</strong><p>有了新的工作和项目经历后，再保存一个版本，看看表达重点发生了什么变化。</p></div></li><li><span>03</span><div><strong>以后回头再看</strong><p>不同阶段的简历放在一起，更容易看清自己一路学会了什么。</p></div></li></ol></div></section>`;
 
     const handleError = (error) => { if (error?.status !== 0) window.alert(error?.message || '操作失败，请稍后重试。'); };
     document.getElementById('upload-resume')?.addEventListener('click', () => repository?.openUpload().catch(handleError));
@@ -147,7 +287,7 @@
   }
 
   function renderAbout() {
-    main.innerHTML = `<section class="page-hero about-hero"><div class="shell about-intro"><div><p class="eyebrow">ABOUT ME</p><h1>你好，我是${escapeHtml(data.profile.name)}。</h1><p>${escapeHtml(data.profile.intro)}</p><div class="about-actions"><a class="primary-button" href="${escapeHtml(data.profile.github)}" target="_blank" rel="noreferrer">访问 GitHub ${icon('external')}</a><a class="secondary-button" href="#/resume">查看简历</a></div></div><div class="portrait-card"><span>XL</span><p>${escapeHtml(data.profile.role)}</p><small>${escapeHtml(data.profile.location)}</small></div></div></section><section class="section page-section"><div class="shell about-grid"><div><p class="eyebrow">FOCUS</p><h2>我关注的方向</h2></div><div class="about-content"><p class="large-copy">以 Java 后端为主线，同时具备 Vue 前端落地能力。我更关心系统是否真正解决业务问题，以及数据在整个流程中是否准确、可追溯。</p><div class="skill-grid"><article><span>01</span><h3>后端开发</h3><p>Spring Boot、REST API、权限、事务、业务状态和异常处理。</p></article><article><span>02</span><h3>数据与分析</h3><p>MySQL、SQL 查询、数据口径、报表和问题定位。</p></article><article><span>03</span><h3>前端交付</h3><p>Vue 3、响应式界面、后台工作台和业务交互。</p></article><article><span>04</span><h3>部署与验证</h3><p>Nginx、Linux、备份、发布检查和故障排查。</p></article></div></div></div></section>`;
+    main.innerHTML = `<section class="page-hero about-hero"><div class="shell about-intro"><div><p class="eyebrow">ABOUT ME</p><h1>我是${escapeHtml(data.profile.name)}，一名 Java 后端开发者。</h1><p>${escapeHtml(data.profile.intro)}</p><div class="about-actions"><a class="primary-button" href="${escapeHtml(data.profile.github)}" target="_blank" rel="noreferrer">访问 GitHub ${icon('external')}</a><a class="secondary-button" href="#/resume">查看简历</a></div></div><div class="portrait-card"><span>XL</span><p>${escapeHtml(data.profile.role)}</p><small>${escapeHtml(data.profile.location)}</small></div></div></section><section class="section page-section"><div class="shell about-grid"><div><p class="eyebrow">FOCUS</p><h2>我关注的方向</h2></div><div class="about-content"><p class="large-copy">以 Java 后端为主线，同时具备 Vue 前端落地能力。我更关心系统是否真正解决业务问题，以及数据在整个流程中是否准确、可追溯。</p><div class="skill-grid"><article><span>01</span><h3>后端开发</h3><p>Spring Boot、REST API、权限、事务、业务状态和异常处理。</p></article><article><span>02</span><h3>数据与分析</h3><p>MySQL、SQL 查询、数据口径、报表和问题定位。</p></article><article><span>03</span><h3>前端交付</h3><p>Vue 3、响应式界面、后台工作台和业务交互。</p></article><article><span>04</span><h3>部署与验证</h3><p>Nginx、Linux、备份、发布检查和故障排查。</p></article></div></div></div></section>`;
   }
 
   async function renderManage() {
@@ -185,8 +325,14 @@
     const post = data.posts.find((item) => item.slug === slug);
     if (!post) return renderNotFound();
     const headings = [...post.content.matchAll(/<h2 id="([^"]+)">([^<]+)<\/h2>/g)];
+    const postIndex = data.posts.findIndex((item) => item.slug === post.slug);
+    const previousPost = data.posts[postIndex + 1] || null;
+    const nextPost = data.posts[postIndex - 1] || null;
+    const previousLink = previousPost ? `<a class="article-page-link previous" href="#/article/${encodeURIComponent(previousPost.slug)}"><small>上一篇</small><strong>← ${escapeHtml(previousPost.title)}</strong></a>` : '<span class="article-page-link disabled"><small>上一篇</small><strong>已经是第一篇</strong></span>';
+    const nextLink = nextPost ? `<a class="article-page-link next" href="#/article/${encodeURIComponent(nextPost.slug)}"><small>下一篇</small><strong>${escapeHtml(nextPost.title)} →</strong></a>` : '<span class="article-page-link next disabled"><small>下一篇</small><strong>已经是最新一篇</strong></span>';
     document.title = `${post.title} · 小刘`;
-    main.innerHTML = `<article class="article"><header class="article-header"><div class="shell article-shell"><a class="back-link" href="#/articles">← 返回文章列表</a><div class="post-meta"><span>${escapeHtml(post.category)}</span><time datetime="${post.date}">${formatDate(post.date)}</time><span>${post.readingMinutes} 分钟阅读</span></div><h1>${escapeHtml(post.title)}</h1><p>${escapeHtml(post.excerpt)}</p><div class="tag-list large">${post.tags.map((tag) => `<a href="#/articles?tag=${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a>`).join('')}</div></div></header><div class="shell article-layout"><aside class="toc"><strong>本文目录</strong>${headings.map((heading) => `<a href="#${escapeHtml(heading[1])}">${escapeHtml(heading[2])}</a>`).join('')}</aside><div class="article-body">${post.content}<div class="article-end"><span>END</span><p>如果这篇文章对你有帮助，欢迎继续浏览我的项目和其他记录。</p><div><a class="primary-button" href="#/projects">查看项目</a><button class="secondary-button share-button" type="button">复制文章链接</button></div></div></div></div><section class="article-community"><div class="shell community-layout"><aside class="like-panel"><p class="eyebrow">LIKE THIS POST</p><h2>这篇文章对你有帮助吗？</h2><button class="like-button" id="like-button" type="button"><span>♡</span><strong id="like-count">0</strong><small>点赞</small></button><p>每个浏览器对同一篇文章记录一次点赞，不保存你的 IP。</p></aside><div class="comment-panel"><div class="comment-heading"><div><p class="eyebrow">COMMENTS</p><h2>评论交流</h2></div><span id="comment-count">0 条公开评论</span></div><div class="comment-list" id="comment-list"><p class="comment-loading">正在读取评论…</p></div><form class="comment-form" id="comment-form"><h3>写下你的想法</h3><p>评论审核通过后公开显示。请勿填写电话、微信、邮箱或外部链接。</p><label class="field-label">怎么称呼你<input name="nickname" maxlength="30" required placeholder="例如：一名 Java 学习者" /></label><label class="field-label">评论内容<textarea name="content" minlength="4" maxlength="800" rows="5" required placeholder="说说你的看法或问题"></textarea></label><label class="form-trap" aria-hidden="true">网站<input name="website" tabindex="-1" autocomplete="off" /></label><p class="form-message" aria-live="polite"></p><button class="primary-button" type="submit">提交评论</button></form></div></div></section></article>`;
+    const publishedAt = post.createdAt ? formatDateTime(post.createdAt) : formatDate(post.date);
+    main.innerHTML = `<article class="article"><header class="article-header"><div class="shell article-shell"><a class="back-link" href="#/articles">← 返回文章列表</a><div class="post-meta"><span>${escapeHtml(post.category)}</span><time datetime="${escapeHtml(post.createdAt || post.date)}">${publishedAt}</time><span>${post.readingMinutes} 分钟阅读</span></div><h1>${escapeHtml(post.title)}</h1><p>${escapeHtml(post.excerpt)}</p><div class="tag-list large">${post.tags.map((tag) => `<a href="#/articles?tag=${encodeURIComponent(tag)}">#${escapeHtml(tag)}</a>`).join('')}</div></div></header><div class="shell article-layout"><aside class="toc" id="article-toc"><strong>本文目录</strong>${headings.map((heading) => `<button class="toc-link" type="button" data-section="${escapeHtml(heading[1])}">${escapeHtml(heading[2])}</button>`).join('')}</aside><div class="article-body">${post.content}<div class="article-end"><span>END</span><p>如果这篇文章对你有帮助，欢迎继续浏览我的项目和其他记录。</p><div><a class="primary-button" href="#/projects">查看项目</a><button class="secondary-button share-button" type="button">复制文章链接</button></div></div></div></div><nav class="shell article-pagination" aria-label="文章阅读导航">${previousLink}<div class="article-return-actions"><button class="secondary-button return-toc" type="button">返回本文目录</button><a class="primary-button" href="#/articles">返回文章列表</a></div>${nextLink}</nav><section class="article-community"><div class="shell community-layout"><aside class="like-panel"><p class="eyebrow">LIKE THIS POST</p><h2>这篇文章对你有帮助吗？</h2><button class="like-button" id="like-button" type="button"><span>♡</span><strong id="like-count">0</strong><small>点赞</small></button><p>每个浏览器对同一篇文章记录一次点赞，不保存你的 IP。</p></aside><div class="comment-panel"><div class="comment-heading"><div><p class="eyebrow">COMMENTS</p><h2>评论交流</h2></div><span id="comment-count">0 条公开评论</span></div><div class="comment-list" id="comment-list"><p class="comment-loading">正在读取评论…</p></div><form class="comment-form" id="comment-form"><h3>写下你的想法</h3><p>评论审核通过后公开显示。请勿填写电话、微信、邮箱或外部链接。</p><label class="field-label">怎么称呼你<input name="nickname" maxlength="30" required placeholder="例如：一名 Java 学习者" /></label><label class="field-label">评论内容<textarea name="content" minlength="4" maxlength="800" rows="5" required placeholder="说说你的看法或问题"></textarea></label><label class="form-trap" aria-hidden="true">网站<input name="website" tabindex="-1" autocomplete="off" /></label><p class="form-message" aria-live="polite"></p><button class="primary-button" type="submit">提交评论</button></form></div></div></section></article>`;
     enhanceArticle(post);
   }
 
@@ -196,6 +342,12 @@
   }
 
   function enhanceArticle(post) {
+    document.querySelectorAll('.toc-link').forEach((button) => {
+      button.addEventListener('click', () => document.getElementById(button.dataset.section)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    });
+    document.querySelector('.return-toc')?.addEventListener('click', () => {
+      (document.getElementById('article-toc') || document.querySelector('.article-header'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
     document.querySelectorAll('.article-body pre').forEach((block) => {
       const button = document.createElement('button');
       button.className = 'copy-button'; button.type = 'button'; button.textContent = '复制';
@@ -304,5 +456,5 @@
   window.addEventListener('resume-repository-changed', () => { if (routeParts()[0] === 'resume') renderResume(); });
   window.addEventListener('hashchange', route);
   if (!location.hash) history.replaceState(null, '', `${rootUrl}#/`);
-  route();
+  loadPublishedArticles().finally(route);
 })();

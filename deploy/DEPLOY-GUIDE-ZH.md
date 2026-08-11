@@ -1,40 +1,40 @@
-# xiaoliudev.com 博客 V4 发布说明
+# xiaoliudev.com 博客 V6 发布说明
 
 ## 最终访问关系
 
 - `https://xiaoliudev.com/`：个人博客静态主站；
 - `https://xiaoliudev.com/kanglian-cloud/#/login`：康联云登录页；
-- `https://xiaoliudev.com/blog-api/`：简历、点赞、评论和合作留言接口；
+- `https://xiaoliudev.com/blog-api/`：文章发布、简历、点赞、评论和合作留言接口；
 - `https://xiaoliudev.com/api/`：继续转发到原 Spring Boot 服务。
 
-文章与项目页面仍由 Nginx 直接提供。会产生数据的功能由一个 Python 标准库服务处理，默认仅监听 `127.0.0.1:8091`；点赞、评论和合作留言保存在 SQLite 单文件数据库，不占用现有 MySQL。
+页面仍由 Nginx 直接提供。会产生数据的功能由一个 Python 标准库服务处理，默认仅监听 `127.0.0.1:8091`；发布文章、点赞、评论和合作留言保存在 SQLite 单文件数据库，不占用现有 MySQL。
 
 ## 发布包
 
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260811-v4.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260811-v6.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260811-v4.zip
+/home/xiaoliu/personal-blog-release-20260811-v6.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260811-v4
-unzip -q /home/xiaoliu/personal-blog-release-20260811-v4.zip \
-  -d /home/xiaoliu/personal-blog-release-20260811-v4
+mkdir -p /home/xiaoliu/personal-blog-release-20260811-v6
+unzip -q /home/xiaoliu/personal-blog-release-20260811-v6.zip \
+  -d /home/xiaoliu/personal-blog-release-20260811-v6
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260811-v4/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260811-v6/deploy/install-release.sh
 ```
 
 脚本会：
@@ -77,6 +77,7 @@ https://xiaoliudev.com/#/manage
 
 管理中心可以：
 
+- 在“文章”页面创建、发布或删除文章，发布时间由系统自动生成；
 - 查看访客留下的微信、电话或邮箱；
 - 标记合作留言为新留言、已联系或已结束；
 - 审核评论，通过后才会公开；
@@ -93,7 +94,7 @@ sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' /etc/personal-blog-resume.env
 ## 数据位置
 
 ```text
-/var/lib/personal-blog-resumes/blog.db              # 点赞、评论、合作联系方式
+/var/lib/personal-blog-resumes/blog.db              # 发布文章、点赞、评论、合作联系方式
 /var/lib/personal-blog-resumes/resumes.json         # 公开简历版本记录
 /var/lib/personal-blog-resumes/files/               # 正在公开的 PDF
 /var/lib/personal-blog-resumes/deleted-resumes.json # 删除的简历记录
