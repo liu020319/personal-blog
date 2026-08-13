@@ -1,10 +1,11 @@
-# xiaoliudev.com 博客 V12 发布说明
+# xiaoliudev.com 博客 V13 发布说明
 
 ## 最终访问关系
 
 - `https://xiaoliudev.com/`：个人博客静态主站；
 - `https://xiaoliudev.com/kanglian-cloud/#/login`：康联云登录页；
 - `https://xiaoliudev.com/blog-api/`：文章发布、简历、点赞、评论和合作留言接口；
+- `https://xiaoliudev.com/agent-api/`：小刘技术与项目助理接口；
 - `https://xiaoliudev.com/api/`：继续转发到原 Spring Boot 服务。
 
 页面仍由 Nginx 直接提供。会产生数据的功能由一个 Python 标准库服务处理，默认仅监听 `127.0.0.1:8091`；发布文章、点赞、评论和合作留言保存在 SQLite 单文件数据库，不占用现有 MySQL。
@@ -14,27 +15,28 @@
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260813-v12.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260813-v13.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260813-v12.zip
+/home/xiaoliu/personal-blog-release-20260813-v13.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260813-v12
-unzip -q /home/xiaoliu/personal-blog-release-20260813-v12.zip \
-  -d /home/xiaoliu/personal-blog-release-20260813-v12
+mkdir -p /home/xiaoliu/personal-blog-release-20260813-v13
+unzip -q -o /home/xiaoliu/personal-blog-release-20260813-v13.zip \
+  -d /home/xiaoliu/personal-blog-release-20260813-v13
+sed -i 's/\r$//' /home/xiaoliu/personal-blog-release-20260813-v13/deploy/install-release.sh
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260813-v12/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260813-v13/deploy/install-release.sh
 ```
 
 脚本会：

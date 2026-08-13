@@ -7,7 +7,7 @@ SERVICE_ROOT="/opt/personal-blog-resume"
 SERVICE_UNIT="/etc/systemd/system/personal-blog-resume.service"
 SERVICE_ENV="/etc/personal-blog-resume.env"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v12-${STAMP}"
+BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v13-${STAMP}"
 TOKEN_TEMP=""
 
 cleanup() {
@@ -20,6 +20,8 @@ trap cleanup EXIT
 echo "[1/8] 检查发布包和现有站点"
 test -f "${RELEASE_ROOT}/index.html"
 test -f "${RELEASE_ROOT}/blog-assets/app.js"
+test -f "${RELEASE_ROOT}/blog-assets/agent-widget.js"
+test -f "${RELEASE_ROOT}/blog-assets/agent-widget.css"
 test -f "${RELEASE_ROOT}/blog-assets/resume-repository.js"
 test -f "${RELEASE_ROOT}/resume-service/resume_service.py"
 test -f "${RELEASE_ROOT}/deploy/nginx-site-security-headers.conf"
