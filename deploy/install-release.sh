@@ -9,10 +9,18 @@ SERVICE_ENV="/etc/personal-blog-resume.env"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v13-${STAMP}"
 TOKEN_TEMP=""
+SITE_CHECK_TEMP=""
+KANGLIAN_CHECK_TEMP=""
 
 cleanup() {
   if [[ -n "${TOKEN_TEMP}" && -f "${TOKEN_TEMP}" ]]; then
     rm -f -- "${TOKEN_TEMP}"
+  fi
+  if [[ -n "${SITE_CHECK_TEMP}" && -f "${SITE_CHECK_TEMP}" ]]; then
+    rm -f -- "${SITE_CHECK_TEMP}"
+  fi
+  if [[ -n "${KANGLIAN_CHECK_TEMP}" && -f "${KANGLIAN_CHECK_TEMP}" ]]; then
+    rm -f -- "${KANGLIAN_CHECK_TEMP}"
   fi
 }
 trap cleanup EXIT
@@ -111,8 +119,12 @@ sudo nginx -t
 sudo systemctl reload nginx
 
 echo "[8/8] 验证博客与康联云入口"
-curl -fsSL --connect-timeout 15 https://xiaoliudev.com/ | grep '个人技术博客' >/dev/null
-curl -fsSL --connect-timeout 15 https://xiaoliudev.com/kanglian-cloud/ | grep -E '家庭慢病|康联云' >/dev/null
+SITE_CHECK_TEMP="$(mktemp)"
+KANGLIAN_CHECK_TEMP="$(mktemp)"
+curl -fsSL --connect-timeout 15 -o "${SITE_CHECK_TEMP}" https://xiaoliudev.com/
+grep '个人技术博客' "${SITE_CHECK_TEMP}" >/dev/null
+curl -fsSL --connect-timeout 15 -o "${KANGLIAN_CHECK_TEMP}" https://xiaoliudev.com/kanglian-cloud/
+grep -E '家庭慢病|康联云' "${KANGLIAN_CHECK_TEMP}" >/dev/null
 
 echo "STATIC_AND_SERVICE_OK"
 echo "备份目录：${BACKUP_DIR}"
