@@ -83,6 +83,46 @@ class CommentModerationTest(unittest.TestCase):
             for name, value in original.items():
                 setattr(service, name, value)
 
+    def test_cooperation_lead_email_contains_private_contact_for_owner(self):
+        service = self.service
+        original = {
+            "NOTIFY_EMAIL": service.NOTIFY_EMAIL,
+            "SMTP_HOST": service.SMTP_HOST,
+            "SMTP_PORT": service.SMTP_PORT,
+            "SMTP_USERNAME": service.SMTP_USERNAME,
+            "SMTP_PASSWORD": service.SMTP_PASSWORD,
+            "SMTP_STARTTLS": service.SMTP_STARTTLS,
+            "SMTP_SSL": service.SMTP_SSL,
+            "EMAIL_NOTIFICATIONS_ENABLED": service.EMAIL_NOTIFICATIONS_ENABLED,
+        }
+        service.NOTIFY_EMAIL = "owner@example.com"
+        service.SMTP_HOST = "smtp.gmail.com"
+        service.SMTP_PORT = 587
+        service.SMTP_USERNAME = "sender@example.com"
+        service.SMTP_PASSWORD = "app-password"
+        service.SMTP_STARTTLS = True
+        service.SMTP_SSL = False
+        service.EMAIL_NOTIFICATIONS_ENABLED = True
+        try:
+            with mock.patch.object(service, "deliver_email") as deliver:
+                service.send_lead_notification(
+                    "张同学",
+                    "邮箱",
+                    "student@example.com",
+                    "需要一个 Java 毕业设计项目并部署上线。",
+                    "2026-08-13T08:00:00+00:00",
+                )
+                sent = deliver.call_args.args[0]
+                self.assertEqual("[小刘博客] 收到一条新合作需求", sent["Subject"])
+                self.assertIn("student@example.com", sent.get_content())
+                self.assertIn("Java 毕业设计", sent.get_content())
+        finally:
+            for name, value in original.items():
+                setattr(service, name, value)
+
+    def test_email_status_masks_recipient(self):
+        self.assertEqual("ow***@example.com", self.service.masked_email("owner@example.com"))
+
 
 if __name__ == "__main__":
     unittest.main()

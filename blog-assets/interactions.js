@@ -2,6 +2,7 @@
   'use strict';
 
   const apiBase = String(window.BLOG_DATA?.resume?.api || './blog-api').replace(/\/$/, '');
+  const agentApiBase = './agent-api';
   const visitorKey = 'xiaoliu-blog-visitor-id';
 
   class InteractionError extends Error {
@@ -67,6 +68,20 @@
   const deleteLead = (id) => adminRequest(`/admin/leads/${encodeURIComponent(id)}`, { method: 'DELETE' });
   const createArticle = (payload) => adminRequest('/admin/articles', jsonOptions(payload, 'POST', true));
   const deleteArticle = (slug) => adminRequest(`/admin/articles/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  const emailStatus = () => adminRequest('/admin/email-status');
+  const testEmail = () => adminRequest('/admin/email/test', { method: 'POST' });
+
+  async function agentMetrics() {
+    const token = window.ResumeRepository?.getToken() || '';
+    if (!token) throw new InteractionError('请先进入管理模式', 401);
+    const response = await fetch(`${agentApiBase}/admin/metrics`, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new InteractionError(payload.message || `Agent 状态读取失败（${response.status}）`, response.status);
+    return payload;
+  }
 
   window.BlogInteractions = {
     InteractionError,
@@ -82,6 +97,9 @@
     setLeadStatus,
     deleteLead,
     createArticle,
-    deleteArticle
+    deleteArticle,
+    emailStatus,
+    testEmail,
+    agentMetrics
   };
 })();

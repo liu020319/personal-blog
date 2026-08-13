@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$releaseName = "personal-blog-release-20260813-v13"
+$releaseName = "personal-blog-release-20260814-v15"
 $stagingRoot = Join-Path $OutputDirectory $releaseName
 $zipPath = Join-Path $OutputDirectory "$releaseName.zip"
 

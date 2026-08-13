@@ -202,9 +202,8 @@
     });
   }
 
-  async function remove(resumeId, label) {
+  async function remove(resumeId) {
     await ensureAdmin();
-    if (!window.confirm(`确定删除“${label}”吗？删除后服务器文件也会移除，此操作不能在网页中撤销。`)) return false;
     await request(`/admin/resumes/${encodeURIComponent(resumeId)}`, { method: 'DELETE', headers: adminHeaders() });
     window.dispatchEvent(new CustomEvent('resume-repository-changed'));
     return true;

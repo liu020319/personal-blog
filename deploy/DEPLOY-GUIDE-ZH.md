@@ -1,4 +1,4 @@
-# xiaoliudev.com 博客 V13 发布说明
+# xiaoliudev.com 博客 V15 发布说明
 
 ## 最终访问关系
 
@@ -15,38 +15,38 @@
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260813-v13.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260814-v15.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260813-v13.zip
+/home/xiaoliu/personal-blog-release-20260814-v15.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260813-v13
-unzip -q -o /home/xiaoliu/personal-blog-release-20260813-v13.zip \
-  -d /home/xiaoliu/personal-blog-release-20260813-v13
-sed -i 's/\r$//' /home/xiaoliu/personal-blog-release-20260813-v13/deploy/install-release.sh
+mkdir -p /home/xiaoliu/personal-blog-release-20260814-v15
+unzip -q -o /home/xiaoliu/personal-blog-release-20260814-v15.zip \
+  -d /home/xiaoliu/personal-blog-release-20260814-v15
+sed -i 's/\r$//' /home/xiaoliu/personal-blog-release-20260814-v15/deploy/install-release.sh
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260813-v13/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260814-v15/deploy/install-release.sh
 ```
 
 脚本会：
 
 1. 检查博客、康联云入口和原 `/assets/`；
-2. 把当前网页与旧服务备份到 `/home/xiaoliu/backups/`；
+2. 只把本次会覆盖的博客文件、旧服务和私密配置备份到 `/home/xiaoliu/backups/`，不重复复制康联云与原系统资源；备份目录权限为 `0700`；
 3. 移除旧的错误示例简历，但在备份目录保留恢复副本；
 4. 发布新页面；
 5. 安装并启动 `personal-blog-resume` 轻量服务；
-6. 首次部署时生成管理口令，保存到 `/etc/personal-blog-resume.env`；
+6. 首次部署时生成管理口令；若旧口令少于 32 个字符会自动修复，并同步给已安装的 Agent；
 7. 验证服务、博客首页和康联云入口。
 
 出现 `STATIC_AND_SERVICE_OK` 才表示本机安装完成。
@@ -80,7 +80,7 @@ include /etc/nginx/snippets/xiaoliu-site-security-headers.conf;
 
 ## 评论自动审核与邮件提醒
 
-正常评论通过长度、隐私、频率、机器人和广告特征检查后会立即公开；可疑评论仍进入管理中心人工审核。配置邮件后，每次收到评论都会尝试发送提醒，邮件失败不会影响评论保存。
+正常评论通过长度、隐私、频率、机器人和广告特征检查后会立即公开；可疑评论仍进入管理中心人工审核。配置邮件后，每次收到评论或合作需求都会尝试发送提醒，邮件失败不会影响数据保存。
 
 Gmail 账号必须启用两步验证，并创建单独的“应用专用密码”。不要填写 Gmail 登录密码。编辑：
 
@@ -109,6 +109,10 @@ sudo systemctl status personal-blog-resume --no-pager
 sudo journalctl -u personal-blog-resume -n 50 --no-pager
 ```
 
+不要填写 Gmail 登录密码。应用专用密码是 Google 在开启两步验证后单独生成的 16 位凭据，只放在服务器这个权限为 `0600` 的环境文件里，不要发到聊天、截图或 GitHub。
+
+重启后进入 `https://xiaoliudev.com/#/manage`，管理中心会显示邮件是否已配置；点击“发送测试邮件”，收到测试邮件后才算配置完成。
+
 ## 管理中心
 
 访问：
@@ -122,7 +126,9 @@ https://xiaoliudev.com/#/manage
 - 在“文章”页面创建、发布或删除文章，发布时间由系统自动生成；
 - 查看访客留下的微信、电话或邮箱；
 - 标记合作留言为新留言、已联系或已结束；
-- 审核评论，通过后才会公开；
+- 查看自动公开的普通评论，并人工处理可疑待审核评论；
+- 查看邮件提醒配置并发送测试邮件；
+- 查看 Agent 当日模型调用、缓存、限流和并发状态；
 - 删除不合适的评论或合作记录。
 
 查看管理口令：

@@ -3,6 +3,7 @@
 
   const API_BASE = './agent-api';
   const MAX_HISTORY = 8;
+  const COOPERATION_DRAFT_KEY = 'xiaoliu-agent-cooperation-draft';
   const state = { busy: false, history: [] };
 
   const launcher = document.createElement('button');
@@ -67,6 +68,30 @@
     }
   }
 
+  function openCooperationForm(handoff) {
+    const visitorMessages = state.history
+      .filter((item) => item.role === 'user')
+      .slice(-5)
+      .map((item) => `- ${item.content}`)
+      .join('\n');
+    const requirement = visitorMessages || String(handoff.draft || '').trim();
+    try {
+      sessionStorage.setItem(COOPERATION_DRAFT_KEY, JSON.stringify({
+        source: 'agent',
+        projectType: handoff.projectType || '其他技术需求',
+        requirement: `我通过“小刘技术与项目助理”咨询了以下内容：\n${requirement}`.slice(0, 1100),
+        createdAt: Date.now()
+      }));
+    } catch (_) {
+      // 浏览器禁用会话存储时仍然允许进入合作页面。
+    }
+    dialog.close();
+    const target = '#/services?source=agent';
+    if (window.location.hash === target) window.dispatchEvent(new HashChangeEvent('hashchange'));
+    else window.location.hash = target;
+    window.setTimeout(() => document.getElementById('contact-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+  }
+
   function addMessage(role, content, options = {}) {
     const wrapper = document.createElement('div');
     wrapper.className = `agent-message ${role}${options.error ? ' error' : ''}${options.loading ? ' loading' : ''}`;
@@ -100,6 +125,10 @@
         link.className = 'agent-handoff';
         link.href = href;
         link.textContent = options.handoff.label || '填写合作需求';
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          openCooperationForm(options.handoff);
+        });
         card.appendChild(link);
       }
     }
@@ -158,4 +187,3 @@
     button.addEventListener('click', () => ask(button.textContent));
   });
 })();
-

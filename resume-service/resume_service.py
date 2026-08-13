@@ -44,7 +44,7 @@ NOTIFY_EMAIL = os.environ.get("BLOG_NOTIFY_EMAIL", "").strip()
 SMTP_HOST = os.environ.get("BLOG_SMTP_HOST", "").strip()
 SMTP_PORT = int(os.environ.get("BLOG_SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("BLOG_SMTP_USERNAME", "").strip()
-SMTP_PASSWORD = os.environ.get("BLOG_SMTP_PASSWORD", "")
+SMTP_PASSWORD = os.environ.get("BLOG_SMTP_PASSWORD", "").replace(" ", "")
 SMTP_STARTTLS = os.environ.get("BLOG_SMTP_STARTTLS", "true").lower() == "true"
 SMTP_SSL = os.environ.get("BLOG_SMTP_SSL", "false").lower() == "true"
 EMAIL_NOTIFICATIONS_ENABLED = os.environ.get("BLOG_EMAIL_NOTIFICATIONS", "false").lower() == "true"
@@ -206,6 +206,22 @@ def email_notifications_configured() -> bool:
     )
 
 
+def deliver_email(message: EmailMessage) -> None:
+    context = ssl.create_default_context()
+    if SMTP_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=context) as client:
+            client.login(SMTP_USERNAME, SMTP_PASSWORD)
+            client.send_message(message)
+        return
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as client:
+        client.ehlo()
+        if SMTP_STARTTLS:
+            client.starttls(context=context)
+            client.ehlo()
+        client.login(SMTP_USERNAME, SMTP_PASSWORD)
+        client.send_message(message)
+
+
 def send_comment_notification(article_slug: str, nickname: str, content: str, status: str, created_at: str) -> None:
     if not email_notifications_configured():
         return
@@ -223,19 +239,46 @@ def send_comment_notification(article_slug: str, nickname: str, content: str, st
         f"评论内容：\n{content}\n\n"
         "管理中心：https://xiaoliudev.com/#/manage\n"
     )
-    context = ssl.create_default_context()
-    if SMTP_SSL:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=context) as client:
-            client.login(SMTP_USERNAME, SMTP_PASSWORD)
-            client.send_message(message)
+    deliver_email(message)
+
+
+def send_lead_notification(
+    name: str,
+    contact_method: str,
+    contact_value: str,
+    requirement: str,
+    created_at: str,
+) -> None:
+    if not email_notifications_configured():
         return
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as client:
-        client.ehlo()
-        if SMTP_STARTTLS:
-            client.starttls(context=context)
-            client.ehlo()
-        client.login(SMTP_USERNAME, SMTP_PASSWORD)
-        client.send_message(message)
+    message = EmailMessage()
+    message["Subject"] = "[小刘博客] 收到一条新合作需求"
+    message["From"] = SMTP_USERNAME
+    message["To"] = NOTIFY_EMAIL
+    message.set_content(
+        "小刘的博客收到一条新合作需求。\n\n"
+        f"称呼：{name}\n"
+        f"联系方式类型：{contact_method}\n"
+        f"联系方式：{contact_value}\n"
+        f"时间：{created_at}\n\n"
+        f"需求说明：\n{requirement}\n\n"
+        "管理中心：https://xiaoliudev.com/#/manage\n"
+    )
+    deliver_email(message)
+
+
+def send_test_notification() -> None:
+    if not email_notifications_configured():
+        raise ValueError("邮件提醒尚未配置完整")
+    message = EmailMessage()
+    message["Subject"] = "[小刘博客] 邮件提醒测试成功"
+    message["From"] = SMTP_USERNAME
+    message["To"] = NOTIFY_EMAIL
+    message.set_content(
+        "这是一封来自小刘博客管理中心的测试邮件。\n\n"
+        "收到这封邮件说明：评论提醒和合作需求提醒已经可以正常发送。\n"
+    )
+    deliver_email(message)
 
 
 def notify_comment_async(article_slug: str, nickname: str, content: str, status: str, created_at: str) -> None:
@@ -254,6 +297,38 @@ def notify_comment_async(article_slug: str, nickname: str, content: str, status:
             EMAIL_DELIVERY_SLOTS.release()
 
     threading.Thread(target=deliver, name="comment-email", daemon=True).start()
+
+
+def notify_lead_async(
+    name: str,
+    contact_method: str,
+    contact_value: str,
+    requirement: str,
+    created_at: str,
+) -> None:
+    if not email_notifications_configured():
+        return
+    if not EMAIL_DELIVERY_SLOTS.acquire(blocking=False):
+        print("lead notification email skipped because delivery slots are busy", flush=True)
+        return
+
+    def deliver() -> None:
+        try:
+            send_lead_notification(name, contact_method, contact_value, requirement, created_at)
+        except (OSError, smtplib.SMTPException):
+            print("lead notification email failed", flush=True)
+        finally:
+            EMAIL_DELIVERY_SLOTS.release()
+
+    threading.Thread(target=deliver, name="lead-email", daemon=True).start()
+
+
+def masked_email(value: str) -> str:
+    if "@" not in value:
+        return ""
+    local, domain = value.split("@", 1)
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}***@{domain}"
 
 
 def valid_article_slug(value: str) -> str:
@@ -450,7 +525,8 @@ class ResumeHandler(BaseHTTPRequestHandler):
         return payload
 
     def client_key(self) -> str:
-        return (self.headers.get("X-Real-IP") or self.client_address[0] or "unknown")[:80]
+        address = str(self.headers.get("X-Real-IP") or self.client_address[0] or "unknown")[:80]
+        return hashlib.sha256(address.encode("utf-8")).hexdigest()[:24]
 
     def require_human_form(self, payload: dict) -> None:
         if payload.get("website"):
@@ -472,6 +548,20 @@ class ResumeHandler(BaseHTTPRequestHandler):
             if path == "/admin/check":
                 if self.require_admin():
                     self.json_response(HTTPStatus.OK, {"ok": True})
+                return
+            if path == "/admin/email-status":
+                if not self.require_admin():
+                    return
+                self.json_response(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "configured": email_notifications_configured(),
+                        "enabled": EMAIL_NOTIFICATIONS_ENABLED,
+                        "recipient": masked_email(NOTIFY_EMAIL),
+                        "smtpHost": SMTP_HOST if SMTP_HOST else "",
+                    },
+                )
                 return
             if path == "/articles":
                 with database() as connection:
@@ -579,6 +669,18 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        if path == "/admin/email/test":
+            if not self.require_admin():
+                return
+            try:
+                send_test_notification()
+                self.json_response(HTTPStatus.OK, {"ok": True, "message": "测试邮件已发送，请检查收件箱和垃圾邮件"})
+            except ValueError as exc:
+                self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
+            except (OSError, smtplib.SMTPException) as exc:
+                print(f"test notification email failed: {type(exc).__name__}", flush=True)
+                self.error_response(HTTPStatus.BAD_GATEWAY, "测试邮件发送失败，请检查 Gmail 地址、应用专用密码和服务日志")
+            return
         if path == "/admin/articles":
             if not self.require_admin():
                 return
@@ -705,6 +807,7 @@ class ResumeHandler(BaseHTTPRequestHandler):
                            VALUES (?, ?, ?, ?, ?, 'new', ?, ?)""",
                         (lead_id, name, method, contact_value, requirement, now, now),
                     )
+                notify_lead_async(name, method, contact_value, requirement, now)
                 self.json_response(HTTPStatus.CREATED, {"ok": True, "message": "合作需求已提交，小刘会在看到后与你联系"})
                 return
             except (UnicodeError, ValueError, json.JSONDecodeError) as exc:

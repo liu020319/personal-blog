@@ -205,7 +205,15 @@
     document.getElementById('create-article')?.addEventListener('click', openArticleEditor);
     document.querySelectorAll('.delete-article').forEach((button) => {
       button.addEventListener('click', async () => {
-        if (!window.confirm(`确定删除文章“${button.dataset.articleTitle}”吗？删除后访客将无法再看到。`)) return;
+        const confirmed = await openSiteDialog({
+          tone: 'review',
+          eyebrow: 'DELETE ARTICLE',
+          title: '确认删除这篇文章？',
+          message: `“${button.dataset.articleTitle}”删除后，访客将无法再看到。`,
+          confirmLabel: '确认删除',
+          cancelLabel: '先不删除'
+        });
+        if (!confirmed) return;
         button.disabled = true;
         try {
           await window.BlogInteractions.deleteArticle(button.dataset.articleSlug);
@@ -213,7 +221,7 @@
           renderArticles();
         } catch (error) {
           button.disabled = false;
-          window.alert(error.message || '删除失败，请稍后重试。');
+          await openSiteDialog({ tone: 'error', eyebrow: 'DELETE FAILED', title: '文章删除失败', message: error.message || '请稍后重试。', confirmLabel: '返回检查' });
         }
       });
     });
@@ -260,13 +268,33 @@
   }
 
   function renderServices() {
+    const serviceParams = new URLSearchParams(location.hash.split('?')[1] || '');
+    let agentDraft = null;
+    if (serviceParams.get('source') === 'agent') {
+      try {
+        const parsedDraft = JSON.parse(sessionStorage.getItem('xiaoliu-agent-cooperation-draft') || 'null');
+        if (parsedDraft && Date.now() - Number(parsedDraft.createdAt || 0) < 2 * 60 * 60 * 1000) agentDraft = parsedDraft;
+      } catch (_) {
+        agentDraft = null;
+      }
+    }
     main.innerHTML = `<section class="page-hero services-hero"><div class="shell"><p class="eyebrow">WORK WITH ME</p><h1>合作服务</h1><p>无论是第一次把想法做成完整项目，还是已有系统需要继续开发，都会先把目标、范围、时间和验收方式说清楚。</p></div></section>
     <section class="section services-main"><div class="shell"><div class="service-grid detailed">${data.services.map((service) => serviceCard(service, true)).join('')}</div></div></section>
     <section class="section service-process"><div class="shell"><div class="section-heading"><div><p class="eyebrow">DELIVERY PROCESS</p><h2>提前体验一次完整的<br>企业开发流程。</h2></div><p>不是只交付一份代码，而是让需求、开发、测试、发布和验证都有可以回看的过程。</p></div><ol class="process-grid"><li><span>01</span><h3>需求确认</h3><p>明确使用者、核心场景、已有材料、时间要求和最终交付物。</p></li><li><span>02</span><h3>方案与计划</h3><p>拆分功能、选择技术栈、确定里程碑，并提前说明不包含的范围。</p></li><li><span>03</span><h3>阶段开发</h3><p>使用分支、提交记录、代码讲解和阶段演示，让过程透明可跟进。</p></li><li><span>04</span><h3>测试与上线</h3><p>覆盖关键流程、异常场景、打包部署、回滚准备和线上验证。</p></li></ol></div></section>
     <section class="section cooperation-boundaries"><div class="shell boundary-grid"><article><p class="eyebrow">GRADUATION PROJECT</p><h2>毕设陪跑边界</h2><p>支持选题分析、项目定制、代码实现指导、问题排查、部署演示和答辩思路梳理；学生需要理解并参与自己的项目。</p><strong>不代写论文、不伪造实验数据、不冒名提交或替代答辩。</strong></article><article><p class="eyebrow">FREELANCE DEVELOPMENT</p><h2>兼职合作边界</h2><p>适合范围明确的功能开发、系统迭代、数据报表、故障排查和上线部署。涉及现有系统时，只接收完成任务所必需的最小资料。</p><strong>账号密码、生产数据和公司保密材料不得通过公开仓库传递。</strong></article></div></section>
-    <section class="section service-contact"><div class="shell service-contact-layout"><div class="service-contact-copy"><p class="eyebrow">START A CONVERSATION</p><h2>把你的想法告诉我。</h2><p>填写的联系方式只会出现在小刘的管理中心，不会公开展示。请不要提交密码、生产数据或公司保密材料。</p><a class="text-link" href="${escapeHtml(data.profile.github)}" target="_blank" rel="noreferrer">也可以先查看小刘的 GitHub ${icon('external')}</a></div><form class="contact-form" id="contact-form"><div class="form-grid"><label class="field-label">怎么称呼你<input name="name" maxlength="30" required placeholder="例如：张同学" /></label><label class="field-label">联系方式类型<select name="contactMethod" required><option value="微信">微信</option><option value="电话">电话</option><option value="邮箱">邮箱</option><option value="其他">其他</option></select></label><label class="field-label field-wide">微信号、电话或邮箱<input name="contactValue" minlength="3" maxlength="100" required placeholder="仅管理员可见" /></label><label class="field-label field-wide">需求说明<textarea name="requirement" minlength="10" maxlength="1500" rows="6" required placeholder="想解决什么问题、谁来使用、希望什么时候完成、是否需要部署上线"></textarea></label><label class="form-trap" aria-hidden="true">网站<input name="website" tabindex="-1" autocomplete="off" /></label></div><label class="privacy-confirm"><input name="privacyConfirmed" type="checkbox" required /><span>我同意小刘仅为本次合作沟通保存和使用以上联系方式。</span></label><p class="form-message" aria-live="polite"></p><button class="primary-button" type="submit">提交合作需求</button></form></div></section>`;
+    <section class="section service-contact"><div class="shell service-contact-layout"><div class="service-contact-copy"><p class="eyebrow">START A CONVERSATION</p><h2>把你的想法告诉我。</h2><p>填写的联系方式只会出现在小刘的管理中心，不会公开展示。请不要提交密码、生产数据或公司保密材料。</p><a class="text-link" href="${escapeHtml(data.profile.github)}" target="_blank" rel="noreferrer">也可以先查看小刘的 GitHub ${icon('external')}</a></div><form class="contact-form" id="contact-form">${agentDraft ? '<div class="agent-draft-banner"><strong>已从技术助理带入咨询内容</strong><span>请补充项目阶段、时间和联系方式，提交前仍会再次确认。</span><button type="button" id="clear-agent-draft">清除带入内容</button></div>' : ''}<div class="form-grid"><label class="field-label">怎么称呼你<input name="name" maxlength="30" required placeholder="例如：张同学" /></label><label class="field-label">联系方式类型<select name="contactMethod" required><option value="微信">微信</option><option value="电话">电话</option><option value="邮箱">邮箱</option><option value="其他">其他</option></select></label><label class="field-label field-wide">微信号、电话或邮箱<input name="contactValue" minlength="3" maxlength="100" required placeholder="仅管理员可见" /></label><label class="field-label">需求类型<select name="projectType" required><option value="毕业设计项目">毕业设计项目</option><option value="企业或业务系统">企业或业务系统</option><option value="系统迭代">现有系统迭代</option><option value="数据与报表">数据与报表</option><option value="系统排障与优化">系统排障与优化</option><option value="其他技术需求">其他技术需求</option></select></label><label class="field-label">当前阶段<select name="projectStage" required><option value="只有想法">只有想法</option><option value="已有需求">已有需求说明</option><option value="已有设计">已有原型或设计</option><option value="已有代码">已有代码</option><option value="线上系统">已有线上系统</option></select></label><label class="field-label">期望完成时间<input name="deadline" type="date" /></label><label class="field-label">是否需要部署<select name="deploymentNeeded" required><option value="需要">需要部署上线</option><option value="暂不需要">暂不需要</option><option value="还不确定">还不确定</option></select></label><label class="field-label field-wide">需求说明<textarea name="requirement" minlength="10" maxlength="1200" rows="7" required placeholder="谁来使用、需要解决什么问题、核心功能、已有材料和验收要求"></textarea></label><label class="form-trap" aria-hidden="true">网站<input name="website" tabindex="-1" autocomplete="off" /></label></div><label class="privacy-confirm"><input name="privacyConfirmed" type="checkbox" required /><span>我同意小刘仅为本次合作沟通保存和使用以上联系方式。</span></label><p class="form-message" aria-live="polite"></p><button class="primary-button" type="submit">提交合作需求</button></form></div></section>`;
     const contactForm = document.getElementById('contact-form');
     contactForm.dataset.startedAt = String(Date.now());
+    if (agentDraft) {
+      const projectType = contactForm.elements.projectType;
+      if ([...projectType.options].some((option) => option.value === agentDraft.projectType)) projectType.value = agentDraft.projectType;
+      contactForm.elements.requirement.value = String(agentDraft.requirement || '').slice(0, 1200);
+      document.getElementById('clear-agent-draft')?.addEventListener('click', () => {
+        sessionStorage.removeItem('xiaoliu-agent-cooperation-draft');
+        contactForm.elements.requirement.value = '';
+        document.querySelector('.agent-draft-banner')?.remove();
+      });
+    }
     contactForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       const message = contactForm.querySelector('.form-message');
@@ -275,8 +303,13 @@
       const name = String(form.get('name') || '');
       const contactMethod = String(form.get('contactMethod') || '');
       const contactValue = String(form.get('contactValue') || '');
-      const requirement = String(form.get('requirement') || '');
-      const reviewDetails = `<dl class="contact-review"><div><dt>怎么称呼你</dt><dd>${escapeHtml(name)}</dd></div><div><dt>联系方式</dt><dd><span>${escapeHtml(contactMethod)}</span>${escapeHtml(contactValue)}</dd></div><div class="contact-review-requirement"><dt>需求说明</dt><dd>${escapeHtml(requirement)}</dd></div></dl>`;
+      const projectType = String(form.get('projectType') || '');
+      const projectStage = String(form.get('projectStage') || '');
+      const deadline = String(form.get('deadline') || '') || '暂未确定';
+      const deploymentNeeded = String(form.get('deploymentNeeded') || '');
+      const requirementText = String(form.get('requirement') || '');
+      const requirement = `【需求类型】${projectType}\n【当前阶段】${projectStage}\n【期望时间】${deadline}\n【部署需求】${deploymentNeeded}\n\n${requirementText}`;
+      const reviewDetails = `<dl class="contact-review"><div><dt>怎么称呼你</dt><dd>${escapeHtml(name)}</dd></div><div><dt>联系方式</dt><dd><span>${escapeHtml(contactMethod)}</span>${escapeHtml(contactValue)}</dd></div><div><dt>需求类型</dt><dd>${escapeHtml(projectType)}</dd></div><div><dt>当前阶段</dt><dd>${escapeHtml(projectStage)}</dd></div><div><dt>时间与部署</dt><dd>${escapeHtml(deadline)} · ${escapeHtml(deploymentNeeded)}</dd></div><div class="contact-review-requirement"><dt>需求说明</dt><dd>${escapeHtml(requirementText)}</dd></div></dl>`;
       const confirmed = await openSiteDialog({
         tone: 'review',
         title: '请确认合作信息',
@@ -294,6 +327,7 @@
       try {
         const result = await window.BlogInteractions.contact({ name, contactMethod, contactValue, requirement, privacyConfirmed: form.get('privacyConfirmed') === 'on', website: form.get('website'), startedAt: Number(contactForm.dataset.startedAt) });
         message.dataset.type = 'success'; message.textContent = result.message;
+        sessionStorage.removeItem('xiaoliu-agent-cooperation-draft');
         contactForm.reset(); contactForm.dataset.startedAt = String(Date.now());
         await openSiteDialog({ tone: 'success', eyebrow: 'SUBMITTED', title: '提交成功', message: result.message, confirmLabel: '我知道了' });
       } catch (error) {
@@ -324,14 +358,19 @@
     <section class="section resume-history"><div class="shell resume-history-grid"><div class="resume-history-heading"><p class="eyebrow">VERSION HISTORY</p><h2>成长时间线</h2><p>每份文件独立保存。你可以上传、设为当前版或删除，旧版本不会被新文件覆盖。</p></div><div class="resume-timeline">${timeline}</div></div></section>
     <section class="section resume-method"><div class="shell resume-method-grid"><div><p class="eyebrow">MY RESUME JOURNEY</p><h2>为什么保留这些旧简历</h2></div><ol><li><span>01</span><div><strong>刚毕业时的起点</strong><p>从第一份求职简历开始保留，记下当时掌握的技能和做过的项目。</p></div></li><li><span>02</span><div><strong>工作后的变化</strong><p>有了新的工作和项目经历后，再保存一个版本，看看表达重点发生了什么变化。</p></div></li><li><span>03</span><div><strong>以后回头再看</strong><p>不同阶段的简历放在一起，更容易看清自己一路学会了什么。</p></div></li></ol></div></section>`;
 
-    const handleError = (error) => { if (error?.status !== 0) window.alert(error?.message || '操作失败，请稍后重试。'); };
+    const handleError = (error) => {
+      if (error?.status !== 0) openSiteDialog({ tone: 'error', eyebrow: 'OPERATION FAILED', title: '操作没有完成', message: error?.message || '请稍后重试。', confirmLabel: '返回检查' });
+    };
     document.getElementById('upload-resume')?.addEventListener('click', () => repository?.openUpload().catch(handleError));
     document.getElementById('resume-login')?.addEventListener('click', () => {
       if (!repository) return;
       if (repository.getToken()) repository.logout();
       else repository.login().then(renderResume).catch(handleError);
     });
-    document.querySelectorAll('.delete-resume').forEach((button) => button.addEventListener('click', () => repository?.remove(button.dataset.resumeId, button.dataset.resumeLabel).catch(handleError)));
+    document.querySelectorAll('.delete-resume').forEach((button) => button.addEventListener('click', async () => {
+      const confirmed = await openSiteDialog({ tone: 'review', eyebrow: 'DELETE RESUME', title: '确认删除这份简历？', message: `“${button.dataset.resumeLabel}”及服务器文件都会删除，网页中无法撤销。`, confirmLabel: '确认删除', cancelLabel: '先不删除' });
+      if (confirmed) repository?.remove(button.dataset.resumeId).catch(handleError);
+    }));
     document.querySelectorAll('.set-current-resume').forEach((button) => button.addEventListener('click', () => repository?.setCurrent(button.dataset.resumeId).catch(handleError)));
   }
 
@@ -403,27 +442,59 @@
   async function renderManage() {
     const repository = window.ResumeRepository;
     const interactions = window.BlogInteractions;
+    const handleAdminError = (error) => {
+      if (error?.status !== 0) openSiteDialog({ tone: 'error', eyebrow: 'OPERATION FAILED', title: '管理操作没有完成', message: error?.message || '请稍后重试。', confirmLabel: '返回检查' });
+    };
     main.innerHTML = '<section class="section manage-loading"><div class="shell"><p>正在读取站点管理数据…</p></div></section>';
     if (!repository?.getToken()) {
       main.innerHTML = `<section class="page-hero"><div class="shell"><p class="eyebrow">SITE ADMIN</p><h1>站点管理</h1><p>合作联系方式、待审核评论和简历管理都使用同一份服务器管理口令。</p></div></section><section class="section"><div class="shell manage-login-card"><span>LOCKED</span><h2>请输入管理口令</h2><p>口令只保存在当前浏览器会话，关闭页面后自动清除。</p><button class="primary-button" id="manage-login" type="button">进入管理中心</button></div></section>`;
-      document.getElementById('manage-login').addEventListener('click', () => repository.login().then(renderManage).catch((error) => { if (error.status !== 0) window.alert(error.message); }));
+      document.getElementById('manage-login').addEventListener('click', () => repository.login().then(renderManage).catch((error) => handleAdminError(error)));
       return;
     }
     try {
-      const [commentResult, leadResult] = await Promise.all([interactions.adminComments('all'), interactions.adminLeads('all')]);
+      const [commentResult, leadResult, emailResult, agentResult] = await Promise.all([
+        interactions.adminComments('all'),
+        interactions.adminLeads('all'),
+        interactions.emailStatus().catch((error) => ({ available: false, message: error.message })),
+        interactions.agentMetrics().catch((error) => ({ available: false, message: error.message }))
+      ]);
       if (routeParts()[0] !== 'manage') return;
       const comments = commentResult.items || [];
       const leads = leadResult.items || [];
       const postName = (slug) => data.posts.find((post) => post.slug === slug)?.title || slug;
+      const emailReady = emailResult.available !== false && emailResult.enabled && emailResult.configured;
+      const emailStatusCopy = emailReady ? `已启用 · 提醒发送到 ${escapeHtml(emailResult.recipient || '已配置邮箱')}` : (emailResult.available === false ? '暂时无法读取邮件服务状态' : '尚未完成邮箱提醒配置');
+      const agentMetrics = agentResult.metrics || {};
+      const agentStatusCopy = agentResult.available === false ? '暂时无法读取 Agent 运行状态' : `今日通义千问调用 ${Number(agentMetrics.dailyUsed || 0)} / ${Number(agentMetrics.dailyLimit || 0)} · 缓存命中 ${Number(agentMetrics.cacheHits || 0)} 次`;
       const commentCards = comments.length ? comments.map((comment) => `<article class="manage-item"><div class="manage-item-head"><div><span class="status-pill status-${escapeHtml(comment.status)}">${comment.status === 'pending' ? '待审核' : '已公开'}</span><h3>${escapeHtml(comment.nickname)} · ${escapeHtml(postName(comment.article_slug))}</h3></div><time>${formatDateTime(comment.created_at)}</time></div><p>${escapeHtml(comment.content)}</p><div class="manage-actions">${comment.status === 'pending' ? `<button class="primary-button approve-comment" data-id="${escapeHtml(comment.id)}" type="button">批准公开</button>` : `<a class="secondary-button" href="#/article/${encodeURIComponent(comment.article_slug)}">查看文章</a>`}<button class="secondary-button delete-comment" data-id="${escapeHtml(comment.id)}" type="button">删除评论</button></div></article>`).join('') : '<div class="manage-empty">目前没有评论记录。</div>';
       const leadCards = leads.length ? leads.map((lead) => `<article class="manage-item lead-item"><div class="manage-item-head"><div><span class="status-pill status-${escapeHtml(lead.status)}">${({ new: '新留言', contacted: '已联系', closed: '已结束' })[lead.status]}</span><h3>${escapeHtml(lead.name)} · ${escapeHtml(lead.contact_method)}</h3></div><time>${formatDateTime(lead.created_at)}</time></div><button class="contact-value copy-contact" type="button" data-value="${escapeHtml(lead.contact_value)}" title="点击复制">${escapeHtml(lead.contact_value)} <small>复制</small></button><p>${escapeHtml(lead.requirement)}</p><div class="manage-actions"><select class="lead-status" data-id="${escapeHtml(lead.id)}" aria-label="更新合作状态"><option value="new" ${lead.status === 'new' ? 'selected' : ''}>新留言</option><option value="contacted" ${lead.status === 'contacted' ? 'selected' : ''}>已联系</option><option value="closed" ${lead.status === 'closed' ? 'selected' : ''}>已结束</option></select><button class="secondary-button delete-lead" data-id="${escapeHtml(lead.id)}" type="button">删除记录</button></div></article>`).join('') : '<div class="manage-empty">目前没有合作留言。</div>';
-      main.innerHTML = `<section class="page-hero manage-hero"><div class="shell manage-hero-grid"><div><p class="eyebrow">SITE ADMIN</p><h1>站点管理</h1><p>联系方式不会公开显示；评论只有批准后才会出现在文章下方。</p></div><button class="secondary-button" id="manage-logout" type="button">退出管理</button></div></section><section class="section manage-summary"><div class="shell summary-grid"><article><span>${leads.filter((lead) => lead.status === 'new').length}</span><p>条新合作留言</p></article><article><span>${comments.filter((comment) => comment.status === 'pending').length}</span><p>条待审核评论</p></article><article><span>${comments.filter((comment) => comment.status === 'approved').length}</span><p>条已公开评论</p></article></div></section><section class="section manage-content"><div class="shell manage-columns"><section><div class="manage-section-heading"><p class="eyebrow">COOPERATION LEADS</p><h2>合作联系方式</h2></div><div class="manage-list">${leadCards}</div></section><section><div class="manage-section-heading"><p class="eyebrow">COMMENTS</p><h2>文章评论</h2></div><div class="manage-list">${commentCards}</div></section></div></section>`;
+      main.innerHTML = `<section class="page-hero manage-hero"><div class="shell manage-hero-grid"><div><p class="eyebrow">SITE ADMIN</p><h1>站点管理</h1><p>普通评论通过自动检查后立即公开，可疑内容进入人工审核；联系方式始终只对管理员可见。</p></div><button class="secondary-button" id="manage-logout" type="button">退出管理</button></div></section><section class="section manage-summary"><div class="shell summary-grid"><article><span>${leads.filter((lead) => lead.status === 'new').length}</span><p>条新合作留言</p></article><article><span>${comments.filter((comment) => comment.status === 'pending').length}</span><p>条待审核评论</p></article><article><span>${comments.filter((comment) => comment.status === 'approved').length}</span><p>条已公开评论</p></article><article><span>${Number(agentMetrics.dailyUsed || 0)}</span><p>次今日 Agent 模型调用</p></article></div></section><section class="section manage-operations"><div class="shell operations-grid"><article class="operation-card"><div><p class="eyebrow">EMAIL NOTIFICATIONS</p><h2>邮件提醒</h2><p>${emailStatusCopy}</p></div><span class="operation-state ${emailReady ? 'is-ready' : 'is-warning'}">${emailReady ? '运行中' : '待配置'}</span><button class="secondary-button" id="test-email" type="button" ${emailReady ? '' : 'disabled'}>发送测试邮件</button></article><article class="operation-card"><div><p class="eyebrow">AGENT OPERATIONS</p><h2>技术助理运行状态</h2><p>${agentStatusCopy}</p></div><span class="operation-state ${agentResult.available === false ? 'is-warning' : 'is-ready'}">${agentResult.available === false ? '待更新' : '运行中'}</span><dl class="operation-metrics"><div><dt>成功回答</dt><dd>${Number(agentMetrics.successfulResponses || 0)}</dd></div><div><dt>限流拦截</dt><dd>${Number(agentMetrics.rateLimitedRequests || 0)}</dd></div><div><dt>当前并发</dt><dd>${Number(agentMetrics.activeRequests || 0)}</dd></div></dl></article></div></section><section class="section manage-content"><div class="shell manage-columns"><section><div class="manage-section-heading"><p class="eyebrow">COOPERATION LEADS</p><h2>合作联系方式</h2></div><div class="manage-list">${leadCards}</div></section><section><div class="manage-section-heading"><p class="eyebrow">COMMENTS</p><h2>文章评论</h2></div><div class="manage-list">${commentCards}</div></section></div></section>`;
       const refresh = () => renderManage();
       document.getElementById('manage-logout').addEventListener('click', () => { repository.logout(); renderManage(); });
-      document.querySelectorAll('.approve-comment').forEach((button) => button.addEventListener('click', () => interactions.approveComment(button.dataset.id).then(refresh).catch((error) => window.alert(error.message))));
-      document.querySelectorAll('.delete-comment').forEach((button) => button.addEventListener('click', () => { if (window.confirm('确定删除这条评论吗？')) interactions.deleteComment(button.dataset.id).then(refresh).catch((error) => window.alert(error.message)); }));
-      document.querySelectorAll('.lead-status').forEach((select) => select.addEventListener('change', () => interactions.setLeadStatus(select.dataset.id, select.value).then(refresh).catch((error) => window.alert(error.message))));
-      document.querySelectorAll('.delete-lead').forEach((button) => button.addEventListener('click', () => { if (window.confirm('确定删除这条合作联系方式吗？删除后无法从网页恢复。')) interactions.deleteLead(button.dataset.id).then(refresh).catch((error) => window.alert(error.message)); }));
+      document.getElementById('test-email')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = '正在发送…';
+        try {
+          const result = await interactions.testEmail();
+          await openSiteDialog({ tone: 'success', eyebrow: 'EMAIL SENT', title: '测试邮件已发送', message: result.message || '请到收件箱检查邮件。', confirmLabel: '我知道了' });
+        } catch (error) {
+          await openSiteDialog({ tone: 'error', eyebrow: 'EMAIL FAILED', title: '测试邮件发送失败', message: error.message || '请检查服务器邮箱配置和服务日志。', confirmLabel: '返回检查' });
+        } finally {
+          button.disabled = false;
+          button.textContent = '发送测试邮件';
+        }
+      });
+      document.querySelectorAll('.approve-comment').forEach((button) => button.addEventListener('click', () => interactions.approveComment(button.dataset.id).then(refresh).catch(handleAdminError)));
+      document.querySelectorAll('.delete-comment').forEach((button) => button.addEventListener('click', async () => {
+        const confirmed = await openSiteDialog({ tone: 'review', eyebrow: 'DELETE COMMENT', title: '确认删除这条评论？', message: '删除后将无法从网页恢复。', confirmLabel: '确认删除', cancelLabel: '先不删除' });
+        if (confirmed) interactions.deleteComment(button.dataset.id).then(refresh).catch(handleAdminError);
+      }));
+      document.querySelectorAll('.lead-status').forEach((select) => select.addEventListener('change', () => interactions.setLeadStatus(select.dataset.id, select.value).then(refresh).catch(handleAdminError)));
+      document.querySelectorAll('.delete-lead').forEach((button) => button.addEventListener('click', async () => {
+        const confirmed = await openSiteDialog({ tone: 'review', eyebrow: 'DELETE CONTACT', title: '确认删除这条合作记录？', message: '联系方式和需求说明都会删除，网页中无法恢复。', confirmLabel: '确认删除', cancelLabel: '先不删除' });
+        if (confirmed) interactions.deleteLead(button.dataset.id).then(refresh).catch(handleAdminError);
+      }));
       document.querySelectorAll('.copy-contact').forEach((button) => button.addEventListener('click', async () => { await navigator.clipboard.writeText(button.dataset.value); button.querySelector('small').textContent = '已复制'; }));
     } catch (error) {
       if (error.status === 401) return renderManage();
@@ -482,7 +553,7 @@
     likeButton.addEventListener('click', async () => {
       likeButton.disabled = true;
       try { const result = await interactions.like(post.slug); likeCount.textContent = result.likeCount; likeButton.classList.add('liked'); likeButton.querySelector('span').textContent = '♥'; localStorage.setItem(likedKey, '1'); }
-      catch (error) { window.alert(error.message || '点赞失败，请稍后重试。'); }
+      catch (error) { await openSiteDialog({ tone: 'error', eyebrow: 'LIKE FAILED', title: '点赞没有成功', message: error.message || '请稍后重试。', confirmLabel: '我知道了' }); }
       finally { likeButton.disabled = false; }
     });
     commentForm.dataset.startedAt = String(Date.now());
