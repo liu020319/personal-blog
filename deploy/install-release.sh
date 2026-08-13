@@ -7,7 +7,7 @@ SERVICE_ROOT="/opt/personal-blog-resume"
 SERVICE_UNIT="/etc/systemd/system/personal-blog-resume.service"
 SERVICE_ENV="/etc/personal-blog-resume.env"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v11-${STAMP}"
+BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v12-${STAMP}"
 TOKEN_TEMP=""
 
 cleanup() {
@@ -22,6 +22,7 @@ test -f "${RELEASE_ROOT}/index.html"
 test -f "${RELEASE_ROOT}/blog-assets/app.js"
 test -f "${RELEASE_ROOT}/blog-assets/resume-repository.js"
 test -f "${RELEASE_ROOT}/resume-service/resume_service.py"
+test -f "${RELEASE_ROOT}/deploy/nginx-site-security-headers.conf"
 test -f "${SITE_ROOT}/index.html"
 test -d "${SITE_ROOT}/assets"
 test -f "${SITE_ROOT}/kanglian-cloud/index.html"
@@ -64,6 +65,23 @@ if [[ ! -f "${SERVICE_ENV}" ]]; then
   unset RESUME_TOKEN
 fi
 
+ensure_env_setting() {
+  local key="$1"
+  local value="$2"
+  if ! sudo grep -q "^${key}=" "${SERVICE_ENV}"; then
+    printf '%s=%s\n' "${key}" "${value}" | sudo tee -a "${SERVICE_ENV}" >/dev/null
+  fi
+}
+
+ensure_env_setting BLOG_EMAIL_NOTIFICATIONS false
+ensure_env_setting BLOG_NOTIFY_EMAIL ""
+ensure_env_setting BLOG_SMTP_HOST smtp.gmail.com
+ensure_env_setting BLOG_SMTP_PORT 587
+ensure_env_setting BLOG_SMTP_USERNAME ""
+ensure_env_setting BLOG_SMTP_PASSWORD ""
+ensure_env_setting BLOG_SMTP_STARTTLS true
+ensure_env_setting BLOG_SMTP_SSL false
+
 sudo systemctl daemon-reload
 sudo systemctl enable personal-blog-resume
 sudo systemctl restart personal-blog-resume
@@ -83,6 +101,10 @@ curl -fsS http://127.0.0.1:8091/resumes
 echo
 
 echo "[7/8] 检查并重载 Nginx"
+sudo install -d -m 0755 /etc/nginx/snippets
+sudo install -m 0644 \
+  "${RELEASE_ROOT}/deploy/nginx-site-security-headers.conf" \
+  /etc/nginx/snippets/xiaoliu-site-security-headers.conf
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -97,5 +119,10 @@ if sudo nginx -T 2>&1 | grep 'location /blog-api/' >/dev/null; then
   echo "BLOG_API_PUBLIC_OK"
 else
   echo "NEXT_STEP_REQUIRED：现有 HTTPS server 块还需要加入 deploy/nginx-blog-api-location.conf"
+fi
+if sudo nginx -T 2>&1 | grep 'Strict-Transport-Security.*max-age=31536000' >/dev/null; then
+  echo "SITE_SECURITY_HEADERS_OK"
+else
+  echo "NEXT_STEP_REQUIRED：HTTPS server 块还需要 include /etc/nginx/snippets/xiaoliu-site-security-headers.conf;"
 fi
 echo "管理口令查看命令：sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' ${SERVICE_ENV}"

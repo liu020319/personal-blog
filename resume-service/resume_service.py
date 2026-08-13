@@ -13,6 +13,8 @@ import hashlib
 import json
 import os
 import re
+import smtplib
+import ssl
 import shutil
 import sqlite3
 import threading
@@ -22,6 +24,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timezone
 from email.parser import BytesParser
 from email.policy import default as email_policy
+from email.message import EmailMessage
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,11 +40,20 @@ INDEX_FILE = DATA_DIR / "resumes.json"
 DELETED_INDEX_FILE = DATA_DIR / "deleted-resumes.json"
 DATABASE_FILE = DATA_DIR / "blog.db"
 ADMIN_TOKEN = os.environ.get("RESUME_ADMIN_TOKEN", "")
+NOTIFY_EMAIL = os.environ.get("BLOG_NOTIFY_EMAIL", "").strip()
+SMTP_HOST = os.environ.get("BLOG_SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("BLOG_SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("BLOG_SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.environ.get("BLOG_SMTP_PASSWORD", "")
+SMTP_STARTTLS = os.environ.get("BLOG_SMTP_STARTTLS", "true").lower() == "true"
+SMTP_SSL = os.environ.get("BLOG_SMTP_SSL", "false").lower() == "true"
+EMAIL_NOTIFICATIONS_ENABLED = os.environ.get("BLOG_EMAIL_NOTIFICATIONS", "false").lower() == "true"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 256 * 1024
 LOCK = threading.RLock()
 RATE_LOCK = threading.Lock()
 RATE_BUCKETS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+EMAIL_DELIVERY_SLOTS = threading.BoundedSemaphore(2)
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ID_RE = re.compile(r"^[a-z0-9-]{12,80}$")
@@ -57,6 +69,11 @@ PUBLIC_PII_RE = re.compile(
     r"https?://|(?:微信|手机号|电话|邮箱)\s*[:：])",
     re.IGNORECASE,
 )
+COMMENT_REVIEW_RE = re.compile(
+    r"(?:加\s*[微薇vV]|私聊|代(?:写|做)|包过|刷单|返利|博彩|贷款|推广|广告|免费领取|点击领取|QQ群|群号)",
+    re.IGNORECASE,
+)
+EXCESSIVE_REPEAT_RE = re.compile(r"(.)\1{7,}")
 
 
 def utc_now() -> str:
@@ -172,6 +189,71 @@ def clean_article_content(value: str) -> str:
     if not 20 <= len(cleaned) <= 30000:
         raise ValueError("文章正文长度应为 20-30000 个字符")
     return cleaned
+
+
+def comment_requires_review(nickname: str, content: str) -> bool:
+    combined = f"{nickname} {content}"
+    return bool(COMMENT_REVIEW_RE.search(combined) or EXCESSIVE_REPEAT_RE.search(combined))
+
+
+def email_notifications_configured() -> bool:
+    return bool(
+        EMAIL_NOTIFICATIONS_ENABLED
+        and NOTIFY_EMAIL
+        and SMTP_HOST
+        and SMTP_USERNAME
+        and SMTP_PASSWORD
+    )
+
+
+def send_comment_notification(article_slug: str, nickname: str, content: str, status: str, created_at: str) -> None:
+    if not email_notifications_configured():
+        return
+    message = EmailMessage()
+    message["Subject"] = "[小刘博客] 收到一条新评论"
+    message["From"] = SMTP_USERNAME
+    message["To"] = NOTIFY_EMAIL
+    review_text = "已自动公开" if status == "approved" else "等待人工审核"
+    message.set_content(
+        "小刘的博客收到一条新评论。\n\n"
+        f"文章：{article_slug}\n"
+        f"称呼：{nickname}\n"
+        f"状态：{review_text}\n"
+        f"时间：{created_at}\n\n"
+        f"评论内容：\n{content}\n\n"
+        "管理中心：https://xiaoliudev.com/#/manage\n"
+    )
+    context = ssl.create_default_context()
+    if SMTP_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=context) as client:
+            client.login(SMTP_USERNAME, SMTP_PASSWORD)
+            client.send_message(message)
+        return
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as client:
+        client.ehlo()
+        if SMTP_STARTTLS:
+            client.starttls(context=context)
+            client.ehlo()
+        client.login(SMTP_USERNAME, SMTP_PASSWORD)
+        client.send_message(message)
+
+
+def notify_comment_async(article_slug: str, nickname: str, content: str, status: str, created_at: str) -> None:
+    if not email_notifications_configured():
+        return
+    if not EMAIL_DELIVERY_SLOTS.acquire(blocking=False):
+        print("comment notification email skipped because delivery slots are busy", flush=True)
+        return
+
+    def deliver() -> None:
+        try:
+            send_comment_notification(article_slug, nickname, content, status, created_at)
+        except (OSError, smtplib.SMTPException):
+            print("comment notification email failed", flush=True)
+        finally:
+            EMAIL_DELIVERY_SLOTS.release()
+
+    threading.Thread(target=deliver, name="comment-email", daemon=True).start()
 
 
 def valid_article_slug(value: str) -> str:
@@ -574,14 +656,23 @@ class ResumeHandler(BaseHTTPRequestHandler):
                 nickname = clean_public_text(str(payload.get("nickname", "")), "称呼", 1, 30)
                 content = clean_public_text(str(payload.get("content", "")), "评论内容", 4, 800)
                 comment_id = f"comment-{uuid.uuid4().hex}"
+                created_at = utc_now()
+                status = "pending" if comment_requires_review(nickname, content) else "approved"
+                approved_at = created_at if status == "approved" else None
                 with database() as connection:
                     connection.execute(
                         """INSERT INTO article_comments
-                           (id, article_slug, nickname, content, status, created_at)
-                           VALUES (?, ?, ?, ?, 'pending', ?)""",
-                        (comment_id, slug, nickname, content, utc_now()),
+                           (id, article_slug, nickname, content, status, created_at, approved_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (comment_id, slug, nickname, content, status, created_at, approved_at),
                     )
-                self.json_response(HTTPStatus.CREATED, {"ok": True, "message": "评论已提交，审核通过后公开显示"})
+                notify_comment_async(slug, nickname, content, status, created_at)
+                published = status == "approved"
+                response_message = "评论发布成功，已经公开显示" if published else "评论已提交，将由小刘人工复核后显示"
+                self.json_response(
+                    HTTPStatus.CREATED,
+                    {"ok": True, "published": published, "message": response_message},
+                )
                 return
             except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
                 self.error_response(HTTPStatus.BAD_REQUEST, str(exc))

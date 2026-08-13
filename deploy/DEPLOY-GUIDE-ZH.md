@@ -1,4 +1,4 @@
-# xiaoliudev.com 博客 V11 发布说明
+# xiaoliudev.com 博客 V12 发布说明
 
 ## 最终访问关系
 
@@ -14,27 +14,27 @@
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260811-v11.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260813-v12.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260811-v11.zip
+/home/xiaoliu/personal-blog-release-20260813-v12.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260811-v11
-unzip -q /home/xiaoliu/personal-blog-release-20260811-v11.zip \
-  -d /home/xiaoliu/personal-blog-release-20260811-v11
+mkdir -p /home/xiaoliu/personal-blog-release-20260813-v12
+unzip -q /home/xiaoliu/personal-blog-release-20260813-v12.zip \
+  -d /home/xiaoliu/personal-blog-release-20260813-v12
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260811-v11/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260813-v12/deploy/install-release.sh
 ```
 
 脚本会：
@@ -65,6 +65,46 @@ curl -fsS https://xiaoliudev.com/blog-api/health
 
 ```json
 {"ok": true}
+```
+
+把 `deploy/nginx-site-security-headers.conf` 安装为
+`/etc/nginx/snippets/xiaoliu-site-security-headers.conf`，并在 HTTPS `server` 块中加入：
+
+```nginx
+include /etc/nginx/snippets/xiaoliu-site-security-headers.conf;
+```
+
+它会补齐 HSTS、防 MIME 猜测、防嵌套页面、来源策略和浏览器权限限制。现有页面已经通过 HTML meta 使用严格 CSP，暂不在 Nginx 重复设置 CSP，避免影响康联云页面。
+
+## 评论自动审核与邮件提醒
+
+正常评论通过长度、隐私、频率、机器人和广告特征检查后会立即公开；可疑评论仍进入管理中心人工审核。配置邮件后，每次收到评论都会尝试发送提醒，邮件失败不会影响评论保存。
+
+Gmail 账号必须启用两步验证，并创建单独的“应用专用密码”。不要填写 Gmail 登录密码。编辑：
+
+```bash
+sudoedit /etc/personal-blog-resume.env
+```
+
+填写或修改以下配置：
+
+```text
+BLOG_EMAIL_NOTIFICATIONS=true
+BLOG_NOTIFY_EMAIL=你的收件邮箱
+BLOG_SMTP_HOST=smtp.gmail.com
+BLOG_SMTP_PORT=587
+BLOG_SMTP_USERNAME=你的 Gmail 地址
+BLOG_SMTP_PASSWORD=你的 Gmail 应用专用密码
+BLOG_SMTP_STARTTLS=true
+BLOG_SMTP_SSL=false
+```
+
+保存后重启并查看日志：
+
+```bash
+sudo systemctl restart personal-blog-resume
+sudo systemctl status personal-blog-resume --no-pager
+sudo journalctl -u personal-blog-resume -n 50 --no-pager
 ```
 
 ## 管理中心
