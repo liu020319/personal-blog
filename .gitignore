@@ -6,3 +6,5 @@ Thumbs.db
 *.env
 resumes/**/*.pdf
 resume-service-data/
+__pycache__/
+*.py[cod]

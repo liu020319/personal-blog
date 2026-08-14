@@ -1,42 +1,45 @@
-# xiaoliudev.com 博客 V15 发布说明
+# xiaoliudev.com 博客 V16 发布说明
 
 ## 最终访问关系
 
 - `https://xiaoliudev.com/`：个人博客静态主站；
 - `https://xiaoliudev.com/kanglian-cloud/#/login`：康联云登录页；
 - `https://xiaoliudev.com/blog-api/`：文章发布、简历、点赞、评论和合作留言接口；
+- `https://xiaoliudev.com/#/pulse`：Redis 实时访问、今日 UV/PV 与文章热榜；
 - `https://xiaoliudev.com/agent-api/`：小刘技术与项目助理接口；
 - `https://xiaoliudev.com/api/`：继续转发到原 Spring Boot 服务。
 
-页面仍由 Nginx 直接提供。会产生数据的功能由一个 Python 标准库服务处理，默认仅监听 `127.0.0.1:8091`；发布文章、点赞、评论和合作留言保存在 SQLite 单文件数据库，不占用现有 MySQL。
+页面仍由 Nginx 直接提供。会产生数据的功能由轻量 Python 服务处理，默认仅监听 `127.0.0.1:8091`；文章、点赞、评论和合作留言保存在 SQLite，Redis 只负责高频访问计数、UV、在线窗口、热榜与限流，不占用现有 MySQL。
 
 ## 发布包
 
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260814-v15.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260814-v16.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260814-v15.zip
+/home/xiaoliu/personal-blog-release-20260814-v16.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260814-v15
-unzip -q -o /home/xiaoliu/personal-blog-release-20260814-v15.zip \
-  -d /home/xiaoliu/personal-blog-release-20260814-v15
-sed -i 's/\r$//' /home/xiaoliu/personal-blog-release-20260814-v15/deploy/install-release.sh
+mkdir -p /home/xiaoliu/personal-blog-release-20260814-v16
+unzip -q -o /home/xiaoliu/personal-blog-release-20260814-v16.zip \
+  -d /home/xiaoliu/personal-blog-release-20260814-v16
+sed -i 's/\r$//' \
+  /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-release.sh \
+  /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-redis-analytics.sh
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260814-v15/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-release.sh
 ```
 
 脚本会：
@@ -47,11 +50,24 @@ bash /home/xiaoliu/personal-blog-release-20260814-v15/deploy/install-release.sh
 4. 发布新页面；
 5. 安装并启动 `personal-blog-resume` 轻量服务；
 6. 首次部署时生成管理口令；若旧口令少于 32 个字符会自动修复，并同步给已安装的 Agent；
-7. 验证服务、博客首页和康联云入口。
+7. 配置博客 API 为 16 个固定工作线程、64 个排队位置，过载时返回 503；
+8. 验证服务、博客首页和康联云入口。
 
 出现 `STATIC_AND_SERVICE_OK` 才表示本机安装完成。
 
-## 3. 接入 Nginx
+## 3. 安装 Redis 站点脉搏
+
+第一次启用 Redis 时执行：
+
+```bash
+bash /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-redis-analytics.sh
+```
+
+脚本会通过 Ubuntu 软件源安装 `redis-server` 与 `python3-redis`，创建独立的 `xiaoliu-blog-redis` 服务，生成随机密码，只监听本机 `127.0.0.1:6381`，并把 Redis 数据内存限制为 64MB。它不修改默认 6379 服务，避免影响康联云以后使用 Redis。密码只写入权限为 `0600` 的博客环境文件，不会进入网页或 GitHub。
+
+看到 `REDIS_ANALYTICS_OK` 才表示 Redis 模块完成。Redis 临时不可用时，站点会降级为不显示统计，文章、评论、简历和合作需求不受影响。
+
+## 4. 接入 Nginx
 
 把 `deploy/nginx-blog-api-location.conf` 中的 `location /blog-api/` 放入现有 `xiaoliudev.com` HTTPS `server` 块。不要改动已有 `/api/` 和 `/assets/`。
 
@@ -66,7 +82,7 @@ curl -fsS https://xiaoliudev.com/blog-api/health
 只有 `nginx -t` 成功才能重载。健康接口应返回：
 
 ```json
-{"ok": true}
+{"ok": true, "redis": {"configured": true, "available": true}}
 ```
 
 把 `deploy/nginx-site-security-headers.conf` 安装为
@@ -147,6 +163,7 @@ sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' /etc/personal-blog-resume.env
 /var/lib/personal-blog-resumes/files/               # 正在公开的 PDF
 /var/lib/personal-blog-resumes/deleted-resumes.json # 删除的简历记录
 /var/lib/personal-blog-resumes/trash/               # 简历恢复副本
+/etc/redis/xiaoliu-blog.conf                         # 博客专用 Redis 限制和认证配置
 ```
 
 数据库目录权限为 `0700`，服务文件默认使用 `0077` 权限掩码。合作联系方式不会通过公开接口返回。
@@ -157,6 +174,8 @@ sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' /etc/personal-blog-resume.env
 sudo systemctl status personal-blog-resume --no-pager
 sudo journalctl -u personal-blog-resume -n 80 --no-pager
 curl -fsS http://127.0.0.1:8091/health
+curl -fsS http://127.0.0.1:8091/analytics/summary
+REDISCLI_AUTH="$(sudo sed -n 's#^BLOG_REDIS_URL=redis://:\([^@]*\)@.*#\1#p' /etc/personal-blog-resume.env)" redis-cli -p 6381 ping
 ```
 
 ## 备份重点

@@ -48,6 +48,13 @@
   const like = (slug) => request(`/articles/${encodeURIComponent(slug)}/likes`, jsonOptions({ visitorId: visitorId() }));
   const comment = (slug, payload) => request(`/articles/${encodeURIComponent(slug)}/comments`, jsonOptions(payload));
   const contact = (payload) => request('/contact', jsonOptions(payload));
+  const analyticsVisit = (page, articleSlug = '', heartbeat = false) => request('/analytics/visit', jsonOptions({
+    visitorId: visitorId(),
+    page,
+    articleSlug,
+    heartbeat
+  }));
+  const analyticsSummary = () => request('/analytics/summary');
 
   async function adminRequest(path, options = {}) {
     const token = window.ResumeRepository?.getToken() || '';
@@ -90,6 +97,8 @@
     like,
     comment,
     contact,
+    analyticsVisit,
+    analyticsSummary,
     adminComments,
     approveComment,
     deleteComment,

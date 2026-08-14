@@ -123,6 +123,42 @@ class CommentModerationTest(unittest.TestCase):
     def test_email_status_masks_recipient(self):
         self.assertEqual("ow***@example.com", self.service.masked_email("owner@example.com"))
 
+    def test_analytics_visit_uses_hashed_identity_and_redis_structures(self):
+        service = self.service
+        redis_client = mock.MagicMock()
+        redis_client.set.return_value = True
+        redis_client.pipeline.return_value.execute.return_value = []
+        with mock.patch.object(service, "get_redis_client", return_value=redis_client):
+            result = service.record_analytics_visit(
+                "hashed-client-key",
+                {"visitorId": "visitor_1234567890abcdef", "page": "article", "articleSlug": "test-article"},
+            )
+        self.assertTrue(result["available"])
+        dedupe_key = redis_client.set.call_args.args[0]
+        self.assertNotIn("visitor_1234567890abcdef", dedupe_key)
+        pipeline = redis_client.pipeline.return_value
+        pipeline.pfadd.assert_called_once()
+        pipeline.zincrby.assert_called_once_with("xiaoliu:blog:article:hot", 1, "test-article")
+        pipeline.zadd.assert_called_once()
+
+    def test_analytics_summary_returns_online_uv_pv_and_hot_articles(self):
+        service = self.service
+        redis_client = mock.MagicMock()
+        redis_client.pipeline.return_value.execute.return_value = [0, 3, "12", 5, [("test-article", 9.0)]]
+        with mock.patch.object(service, "get_redis_client", return_value=redis_client):
+            result = service.analytics_summary()
+        self.assertEqual(3, result["online"])
+        self.assertEqual(12, result["todayPv"])
+        self.assertEqual(5, result["todayUv"])
+        self.assertEqual([{"slug": "test-article", "views": 9}], result["topArticles"])
+        self.assertTrue(result["uvApproximate"])
+
+    def test_analytics_falls_back_without_redis(self):
+        with mock.patch.object(self.service, "get_redis_client", return_value=None):
+            result = self.service.analytics_summary()
+        self.assertFalse(result["available"])
+        self.assertEqual([], result["topArticles"])
+
 
 if __name__ == "__main__":
     unittest.main()

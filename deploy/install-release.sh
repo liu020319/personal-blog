@@ -8,7 +8,7 @@ SERVICE_UNIT="/etc/systemd/system/personal-blog-resume.service"
 SERVICE_ENV="/etc/personal-blog-resume.env"
 AGENT_ENV="/etc/xiaoliu-tech-agent.env"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v15-${STAMP}"
+BACKUP_DIR="/home/xiaoliu/backups/personal-blog-v16-${STAMP}"
 TOKEN_TEMP=""
 SITE_CHECK_TEMP=""
 KANGLIAN_CHECK_TEMP=""
@@ -127,6 +127,11 @@ ensure_env_setting BLOG_SMTP_USERNAME ""
 ensure_env_setting BLOG_SMTP_PASSWORD ""
 ensure_env_setting BLOG_SMTP_STARTTLS true
 ensure_env_setting BLOG_SMTP_SSL false
+ensure_env_setting BLOG_REDIS_URL ""
+ensure_env_setting BLOG_REDIS_PREFIX xiaoliu:blog
+ensure_env_setting BLOG_REDIS_TIMEOUT 0.35
+ensure_env_setting BLOG_HTTP_WORKERS 16
+ensure_env_setting BLOG_HTTP_QUEUE 64
 
 sudo systemctl daemon-reload
 sudo systemctl enable personal-blog-resume
@@ -178,14 +183,15 @@ AGENT_WIDGET_CHECK_TEMP="$(mktemp)"
 MANAGEMENT_CHECK_TEMP="$(mktemp)"
 curl -fsSL --connect-timeout 15 \
   -o "${AGENT_WIDGET_CHECK_TEMP}" \
-  'https://xiaoliudev.com/blog-assets/agent-widget.js?release=v15'
+  'https://xiaoliudev.com/blog-assets/agent-widget.js?release=v16'
 grep -Fq 'openCooperationForm' "${AGENT_WIDGET_CHECK_TEMP}"
-echo "AGENT_HANDOFF_V15_OK"
+echo "AGENT_HANDOFF_V16_OK"
 curl -fsSL --connect-timeout 15 \
   -o "${MANAGEMENT_CHECK_TEMP}" \
-  'https://xiaoliudev.com/blog-assets/app.js?release=v15'
+  'https://xiaoliudev.com/blog-assets/app.js?release=v16'
 grep -Fq '发送测试邮件' "${MANAGEMENT_CHECK_TEMP}"
-echo "BLOG_MANAGEMENT_V15_OK"
+grep -Fq '站点脉搏' "${MANAGEMENT_CHECK_TEMP}"
+echo "BLOG_MANAGEMENT_V16_OK"
 if sudo nginx -T 2>&1 | grep 'Strict-Transport-Security.*max-age=31536000' >/dev/null; then
   echo "SITE_SECURITY_HEADERS_OK"
 else

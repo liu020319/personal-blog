@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$releaseName = "personal-blog-release-20260814-v15"
+$releaseName = "personal-blog-release-20260814-v16"
 $stagingRoot = Join-Path $OutputDirectory $releaseName
 $zipPath = Join-Path $OutputDirectory "$releaseName.zip"
 
@@ -27,11 +27,18 @@ $items = @(
   "sitemap.xml",
   "blog-assets",
   "deploy",
+  "performance",
   "resume-service"
 )
 foreach ($item in $items) {
   Copy-Item -LiteralPath (Join-Path $projectRoot $item) -Destination $stagingRoot -Recurse -Force
 }
+
+Get-ChildItem -LiteralPath $stagingRoot -Recurse -Directory -Filter "__pycache__" |
+  Sort-Object FullName -Descending |
+  Remove-Item -Recurse -Force
+Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Include "*.pyc", "*.pyo" |
+  Remove-Item -Force
 
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 Get-ChildItem -LiteralPath $stagingRoot -Recurse -File |

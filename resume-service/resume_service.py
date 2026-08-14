@@ -21,14 +21,20 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from email.message import EmailMessage
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
+
+try:
+    import redis as redis_library
+except ImportError:  # Redis analytics is optional; the rest of the blog stays available.
+    redis_library = None
 
 
 HOST = os.environ.get("RESUME_HOST", "127.0.0.1")
@@ -48,12 +54,21 @@ SMTP_PASSWORD = os.environ.get("BLOG_SMTP_PASSWORD", "").replace(" ", "")
 SMTP_STARTTLS = os.environ.get("BLOG_SMTP_STARTTLS", "true").lower() == "true"
 SMTP_SSL = os.environ.get("BLOG_SMTP_SSL", "false").lower() == "true"
 EMAIL_NOTIFICATIONS_ENABLED = os.environ.get("BLOG_EMAIL_NOTIFICATIONS", "false").lower() == "true"
+REDIS_URL = os.environ.get("BLOG_REDIS_URL", "").strip()
+REDIS_PREFIX = os.environ.get("BLOG_REDIS_PREFIX", "xiaoliu:blog").strip() or "xiaoliu:blog"
+REDIS_TIMEOUT = max(0.1, min(2.0, float(os.environ.get("BLOG_REDIS_TIMEOUT", "0.35"))))
+HTTP_WORKERS = max(2, min(32, int(os.environ.get("BLOG_HTTP_WORKERS", "16"))))
+HTTP_QUEUE = max(8, min(256, int(os.environ.get("BLOG_HTTP_QUEUE", "64"))))
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 256 * 1024
 LOCK = threading.RLock()
 RATE_LOCK = threading.Lock()
 RATE_BUCKETS: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 EMAIL_DELIVERY_SLOTS = threading.BoundedSemaphore(2)
+REDIS_CLIENT_LOCK = threading.Lock()
+REDIS_CLIENT = None
+REDIS_WARNING_LOCK = threading.Lock()
+REDIS_LAST_WARNING = 0.0
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ID_RE = re.compile(r"^[a-z0-9-]{12,80}$")
@@ -155,7 +170,48 @@ def initialize_database() -> None:
         )
 
 
+def get_redis_client():
+    global REDIS_CLIENT
+    if not REDIS_URL or redis_library is None:
+        return None
+    if REDIS_CLIENT is not None:
+        return REDIS_CLIENT
+    with REDIS_CLIENT_LOCK:
+        if REDIS_CLIENT is None:
+            REDIS_CLIENT = redis_library.Redis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=REDIS_TIMEOUT,
+                socket_timeout=REDIS_TIMEOUT,
+                health_check_interval=30,
+            )
+    return REDIS_CLIENT
+
+
+def log_redis_warning(scope: str, exc: Exception) -> None:
+    global REDIS_LAST_WARNING
+    now = time.monotonic()
+    with REDIS_WARNING_LOCK:
+        if now - REDIS_LAST_WARNING < 30:
+            return
+        REDIS_LAST_WARNING = now
+    print(f"redis {scope} unavailable: {type(exc).__name__}", flush=True)
+
+
 def check_rate(client: str, action: str, limit: int, window_seconds: int) -> bool:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        bucket = int(time.time()) // window_seconds
+        key = f"{REDIS_PREFIX}:rate:{action}:{bucket}:{client}"
+        try:
+            pipeline = redis_client.pipeline(transaction=True)
+            pipeline.incr(key)
+            pipeline.expire(key, window_seconds + 5)
+            current, _ = pipeline.execute()
+            return int(current) <= limit
+        except Exception as exc:  # Keep public forms available if Redis is temporarily down.
+            log_redis_warning("rate limiter", exc)
+
     now = time.monotonic()
     key = (client, action)
     with RATE_LOCK:
@@ -166,6 +222,92 @@ def check_rate(client: str, action: str, limit: int, window_seconds: int) -> boo
             return False
         bucket.append(now)
         return True
+
+
+def clean_analytics_page(value: object) -> str:
+    page = str(value or "home").strip().lower()
+    allowed = {"home", "articles", "article", "archive", "projects", "services", "resume", "about", "pulse"}
+    if page not in allowed:
+        raise ValueError("页面标识不正确")
+    return page
+
+
+def analytics_visitor_hash(client_key: str, visitor_id: object) -> str:
+    visitor = str(visitor_id or "")
+    if not VISITOR_ID_RE.fullmatch(visitor):
+        raise ValueError("访客标识不正确")
+    return hashlib.sha256(f"{client_key}:{visitor}".encode("utf-8")).hexdigest()
+
+
+def record_analytics_visit(client_key: str, payload: dict) -> dict:
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return {"ok": True, "available": False, "message": "实时统计服务暂未启用"}
+
+    page = clean_analytics_page(payload.get("page"))
+    slug = str(payload.get("articleSlug") or "").strip()
+    if page == "article":
+        slug = valid_article_slug(slug)
+    elif slug:
+        raise ValueError("文章标识与页面不匹配")
+
+    visitor_hash = analytics_visitor_hash(client_key, payload.get("visitorId"))
+    heartbeat = payload.get("heartbeat") is True
+    today = date.today().strftime("%Y%m%d")
+    now = int(time.time())
+    page_key = hashlib.sha256(f"{page}:{slug}".encode("utf-8")).hexdigest()[:16]
+    dedupe_key = f"{REDIS_PREFIX}:dedupe:{today}:{visitor_hash}:{page_key}"
+    try:
+        counted = False if heartbeat else bool(redis_client.set(dedupe_key, "1", nx=True, ex=60))
+        pipeline = redis_client.pipeline(transaction=True)
+        online_key = f"{REDIS_PREFIX}:online"
+        pipeline.zadd(online_key, {visitor_hash: now})
+        pipeline.zremrangebyscore(online_key, 0, now - 300)
+        pipeline.expire(online_key, 900)
+        if counted:
+            pv_key = f"{REDIS_PREFIX}:pv:{today}"
+            uv_key = f"{REDIS_PREFIX}:uv:{today}"
+            pipeline.incr(pv_key)
+            pipeline.expire(pv_key, 8 * 86400)
+            pipeline.pfadd(uv_key, visitor_hash)
+            pipeline.expire(uv_key, 8 * 86400)
+            if slug:
+                pipeline.zincrby(f"{REDIS_PREFIX}:article:hot", 1, slug)
+        pipeline.execute()
+        return {"ok": True, "available": True, "counted": counted}
+    except Exception as exc:
+        log_redis_warning("analytics write", exc)
+        return {"ok": True, "available": False, "message": "实时统计服务暂时不可用"}
+
+
+def analytics_summary() -> dict:
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return {"ok": True, "available": False, "online": 0, "todayPv": 0, "todayUv": 0, "topArticles": []}
+    today = date.today().strftime("%Y%m%d")
+    now = int(time.time())
+    try:
+        pipeline = redis_client.pipeline(transaction=True)
+        online_key = f"{REDIS_PREFIX}:online"
+        pipeline.zremrangebyscore(online_key, 0, now - 300)
+        pipeline.zcard(online_key)
+        pipeline.get(f"{REDIS_PREFIX}:pv:{today}")
+        pipeline.pfcount(f"{REDIS_PREFIX}:uv:{today}")
+        pipeline.zrevrange(f"{REDIS_PREFIX}:article:hot", 0, 4, withscores=True)
+        _, online, pv, uv, ranking = pipeline.execute()
+        return {
+            "ok": True,
+            "available": True,
+            "online": int(online or 0),
+            "todayPv": int(pv or 0),
+            "todayUv": int(uv or 0),
+            "topArticles": [{"slug": slug, "views": int(score)} for slug, score in ranking],
+            "windowMinutes": 5,
+            "uvApproximate": True,
+        }
+    except Exception as exc:
+        log_redis_warning("analytics read", exc)
+        return {"ok": True, "available": False, "online": 0, "todayPv": 0, "todayUv": 0, "topArticles": []}
 
 
 def clean_public_text(value: str, field: str, minimum: int, maximum: int) -> str:
@@ -467,12 +609,54 @@ def validate_pdf(content: bytes, original_name: str) -> None:
             raise ValueError("PDF 包含脚本、启动动作或嵌入文件，不能公开上传")
 
 
+class BoundedThreadPoolHTTPServer(HTTPServer):
+    """A small fixed worker pool that rejects overload instead of spawning unlimited threads."""
+
+    allow_reuse_address = True
+    request_queue_size = 128
+
+    def __init__(self, server_address: tuple[str, int], handler_class, workers: int, pending: int):
+        super().__init__(server_address, handler_class)
+        self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="blog-api")
+        self.capacity = threading.BoundedSemaphore(workers + pending)
+
+    def process_request(self, request, client_address) -> None:
+        if not self.capacity.acquire(blocking=False):
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Content-Length: 0\r\nConnection: close\r\nRetry-After: 2\r\n\r\n"
+                )
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            self.executor.submit(self._process_request, request, client_address)
+        except Exception:
+            self.capacity.release()
+            self.shutdown_request(request)
+            raise
+
+    def _process_request(self, request, client_address) -> None:
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
+            self.capacity.release()
+
+    def server_close(self) -> None:
+        self.executor.shutdown(wait=True, cancel_futures=True)
+        super().server_close()
+
+
 class ResumeHandler(BaseHTTPRequestHandler):
     server_version = "XiaoliuResume/1.0"
 
     def log_message(self, fmt: str, *args: object) -> None:
-        # Never log Authorization headers or request bodies.
-        super().log_message(fmt, *args)
+        # Do not retain visitor IP addresses, tokens or request bodies in service logs.
+        return
 
     def end_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -543,7 +727,24 @@ class ResumeHandler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         try:
             if path == "/health":
-                self.json_response(HTTPStatus.OK, {"ok": True})
+                redis_client = get_redis_client()
+                redis_ready = False
+                if redis_client is not None:
+                    try:
+                        redis_ready = bool(redis_client.ping())
+                    except Exception:
+                        redis_ready = False
+                self.json_response(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "redis": {"configured": bool(REDIS_URL), "available": redis_ready},
+                        "http": {"workers": HTTP_WORKERS, "queue": HTTP_QUEUE},
+                    },
+                )
+                return
+            if path == "/analytics/summary":
+                self.json_response(HTTPStatus.OK, analytics_summary())
                 return
             if path == "/admin/check":
                 if self.require_admin():
@@ -669,6 +870,16 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        if path == "/analytics/visit":
+            try:
+                if not check_rate(self.client_key(), "analytics", 180, 60):
+                    self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "访问统计请求过于频繁")
+                    return
+                payload = self.json_body(maximum=8 * 1024)
+                self.json_response(HTTPStatus.OK, record_analytics_visit(self.client_key(), payload))
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
+            return
         if path == "/admin/email/test":
             if not self.require_admin():
                 return
@@ -994,8 +1205,11 @@ def main() -> None:
     if len(ADMIN_TOKEN) < 32:
         raise SystemExit("RESUME_ADMIN_TOKEN must contain at least 32 characters")
     ensure_storage()
-    server = ThreadingHTTPServer((HOST, PORT), ResumeHandler)
-    print(f"resume service listening on http://{HOST}:{PORT}", flush=True)
+    server = BoundedThreadPoolHTTPServer((HOST, PORT), ResumeHandler, HTTP_WORKERS, HTTP_QUEUE)
+    print(
+        f"resume service listening on http://{HOST}:{PORT}, workers={HTTP_WORKERS}, queue={HTTP_QUEUE}",
+        flush=True,
+    )
     server.serve_forever()
 
 

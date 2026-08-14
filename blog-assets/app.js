@@ -241,6 +241,26 @@
     main.innerHTML = `<section class="page-hero projects-hero"><div class="shell"><p class="eyebrow">PROJECT SPACE</p><h1>项目空间</h1><p>这里集中展示我独立完成或深入参与的项目。线上项目提供直接入口，后续作品会持续加入。</p></div></section><section class="section page-section"><div class="shell"><div class="project-grid">${data.projects.map((project) => projectCard(project, false)).join('')}<article class="project-card project-coming"><div class="coming-plus">+</div><p class="eyebrow">NEXT PROJECT</p><h3>下一个项目</h3><p>预留的扩展位置。新增项目只需在 <code>blog-assets/data.js</code> 中增加名称、简介、技术栈和登录地址。</p></article></div><div class="project-note"><strong>关于项目入口</strong><p>点击“进入项目登录页”会在新窗口打开独立业务系统。博客不保存业务账号、密码或生产配置。</p></div></div></section>`;
   }
 
+  function renderPulse() {
+    main.innerHTML = `<section class="page-hero pulse-hero"><div class="shell pulse-hero-grid"><div><p class="eyebrow">REDIS LIVE DATA</p><h1>站点脉搏</h1><p>这里展示博客当前的访问状态和文章热度。统计由 Redis 实时计算，文章、评论和简历仍由原来的持久化服务保存。</p></div><span class="pulse-live-badge"><i></i> LIVE</span></div></section><section class="section pulse-section"><div class="shell"><div class="pulse-loading">正在读取实时数据…</div></div></section>`;
+    window.BlogInteractions.analyticsSummary().then((result) => {
+      if (routeParts()[0] !== 'pulse') return;
+      const section = main.querySelector('.pulse-section .shell');
+      if (!result.available) {
+        section.innerHTML = '<div class="pulse-unavailable"><span>REDIS OFFLINE</span><h2>实时统计暂时不可用</h2><p>博客文章、项目入口、评论和合作表单仍可正常使用。统计服务恢复后这里会自动显示数据。</p></div>';
+        return;
+      }
+      const ranking = (result.topArticles || []).map((item, index) => {
+        const post = data.posts.find((candidate) => candidate.slug === item.slug);
+        const title = post?.title || item.slug;
+        return `<a class="pulse-ranking-item" href="#/article/${encodeURIComponent(item.slug)}"><span>${String(index + 1).padStart(2, '0')}</span><strong>${escapeHtml(title)}</strong><small>${Number(item.views) || 0} 次阅读</small></a>`;
+      }).join('');
+      section.innerHTML = `<div class="pulse-metrics"><article><span>ONLINE</span><strong>${Number(result.online) || 0}</strong><p>近 ${Number(result.windowMinutes) || 5} 分钟活跃访客</p></article><article><span>TODAY UV</span><strong>${Number(result.todayUv) || 0}</strong><p>今日独立访客（近似值）</p></article><article><span>TODAY PV</span><strong>${Number(result.todayPv) || 0}</strong><p>今日有效页面访问</p></article></div><div class="pulse-grid"><section class="pulse-ranking"><div class="pulse-section-heading"><p class="eyebrow">ARTICLE RANKING</p><h2>文章热榜</h2></div>${ranking || '<div class="pulse-ranking-empty">热榜正在积累，阅读文章后会在这里看到排行。</div>'}</section><section class="pulse-architecture"><p class="eyebrow">HOW REDIS WORKS HERE</p><h2>Redis 在这里做什么</h2><ol><li><span>01</span><div><strong>原子计数</strong><p>String 记录每日 PV，高频累加不与 SQLite 写入争锁。</p></div></li><li><span>02</span><div><strong>独立访客</strong><p>HyperLogLog 估算每日 UV，只保存不可逆访客摘要。</p></div></li><li><span>03</span><div><strong>实时排序</strong><p>Sorted Set 按阅读次数维护文章热榜。</p></div></li><li><span>04</span><div><strong>在线窗口</strong><p>按最近心跳时间清理超过 5 分钟的访客。</p></div></li></ol></section></div><div class="pulse-privacy"><strong>隐私说明</strong><p>不在 Redis 中保存访客原始 IP、聊天正文或联系方式；UV 是近似统计，适合观察趋势，不作为财务或审计数据。</p></div>`;
+    }).catch(() => {
+      if (routeParts()[0] === 'pulse') main.querySelector('.pulse-section .shell').innerHTML = '<div class="pulse-unavailable"><span>SERVICE UNAVAILABLE</span><h2>实时数据读取失败</h2><p>这不会影响博客其他功能，请稍后刷新。</p></div>';
+    });
+  }
+
   function openSiteDialog({ tone = 'review', eyebrow = 'PLEASE CONFIRM', title, message, details = '', confirmLabel = '我知道了', cancelLabel = '' }) {
     return new Promise((resolve) => {
       const dialog = document.createElement('dialog');
@@ -594,6 +614,7 @@
     else if (section === 'articles') renderArticles();
     else if (section === 'article') renderArticle(detail);
     else if (section === 'archive') renderArchive();
+    else if (section === 'pulse') renderPulse();
     else if (section === 'projects') renderProjects();
     else if (section === 'services') renderServices();
     else if (section === 'resume') renderResume();
@@ -602,6 +623,16 @@
     else renderNotFound();
     updateActiveNav(section || 'home');
     closeMobileMenu();
+    recordCurrentRoute(false);
+  }
+
+  function recordCurrentRoute(heartbeat) {
+    if (document.visibilityState === 'hidden') return;
+    const [section, detail] = routeParts();
+    const page = section || 'home';
+    const allowed = new Set(['home', 'articles', 'article', 'archive', 'projects', 'services', 'resume', 'about', 'pulse']);
+    if (!allowed.has(page)) return;
+    window.BlogInteractions.analyticsVisit(page, page === 'article' ? detail : '', heartbeat).catch(() => {});
   }
 
   function updateActiveNav(section) {
@@ -650,6 +681,8 @@
   document.getElementById('current-year').textContent = new Date().getFullYear();
   window.addEventListener('resume-repository-changed', () => { if (routeParts()[0] === 'resume') renderResume(); });
   window.addEventListener('hashchange', route);
+  window.setInterval(() => recordCurrentRoute(true), 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') recordCurrentRoute(true); });
   if (!location.hash) history.replaceState(null, '', `${rootUrl}#/`);
   loadPublishedArticles().finally(route);
 })();
