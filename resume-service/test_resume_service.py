@@ -18,6 +18,7 @@ def load_service():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    module.ensure_storage()
     return module
 
 
@@ -131,7 +132,15 @@ class CommentModerationTest(unittest.TestCase):
         with mock.patch.object(service, "get_redis_client", return_value=redis_client):
             result = service.record_analytics_visit(
                 "hashed-client-key",
-                {"visitorId": "visitor_1234567890abcdef", "page": "article", "articleSlug": "test-article"},
+                {
+                    "visitorId": "visitor_1234567890abcdef",
+                    "page": "article",
+                    "articleSlug": "test-article",
+                    "consent": True,
+                    "device": {"mobile": False, "platform": "Windows", "screenWidth": 1920, "screenHeight": 1080},
+                },
+                "203.0.113.8",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36",
             )
         self.assertTrue(result["available"])
         dedupe_key = redis_client.set.call_args.args[0]
@@ -140,6 +149,47 @@ class CommentModerationTest(unittest.TestCase):
         pipeline.pfadd.assert_called_once()
         pipeline.zincrby.assert_called_once_with("xiaoliu:blog:article:hot", 1, "test-article")
         pipeline.zadd.assert_called_once()
+
+    def test_analytics_requires_explicit_consent(self):
+        service = self.service
+        with mock.patch.object(service, "get_redis_client", return_value=mock.MagicMock()):
+            result = service.record_analytics_visit(
+                "hashed-client-key",
+                {"visitorId": "visitor_1234567890abcdef", "page": "home"},
+            )
+        self.assertFalse(result["counted"])
+        self.assertTrue(result["consentRequired"])
+
+    def test_visit_log_is_admin_summarized_and_keeps_normalized_ip(self):
+        service = self.service
+        payload = {
+            "visitorId": "visitor_abcdef1234567890",
+            "page": "projects",
+            "consent": True,
+            "device": {
+                "mobile": True,
+                "model": "Pixel 8",
+                "platform": "Android",
+                "platformVersion": "14",
+                "screenWidth": 1080,
+                "screenHeight": 2400,
+                "language": "zh-CN",
+                "timezone": "Asia/Shanghai",
+            },
+        }
+        service.store_visit_event(
+            "hashed-client-key",
+            "203.0.113.9",
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/ABC) Chrome/126.0.0.0 Mobile Safari/537.36",
+            payload,
+            "projects",
+            "",
+        )
+        result = service.admin_analytics_summary(7)
+        self.assertGreaterEqual(result["totals"]["pv"], 1)
+        self.assertEqual("203.0.113.9", result["recent"][0]["ip_address"])
+        self.assertEqual("Pixel 8", result["recent"][0]["device_model"])
+        self.assertEqual("手机", result["recent"][0]["device_type"])
 
     def test_analytics_summary_returns_online_uv_pv_and_hot_articles(self):
         service = self.service

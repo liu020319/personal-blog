@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hmac
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -22,7 +23,7 @@ import time
 import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from email.message import EmailMessage
@@ -59,6 +60,7 @@ REDIS_PREFIX = os.environ.get("BLOG_REDIS_PREFIX", "xiaoliu:blog").strip() or "x
 REDIS_TIMEOUT = max(0.1, min(2.0, float(os.environ.get("BLOG_REDIS_TIMEOUT", "0.35"))))
 HTTP_WORKERS = max(2, min(32, int(os.environ.get("BLOG_HTTP_WORKERS", "16"))))
 HTTP_QUEUE = max(8, min(256, int(os.environ.get("BLOG_HTTP_QUEUE", "64"))))
+ANALYTICS_RETENTION_DAYS = max(1, min(90, int(os.environ.get("BLOG_ANALYTICS_RETENTION_DAYS", "30"))))
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 256 * 1024
 LOCK = threading.RLock()
@@ -69,6 +71,8 @@ REDIS_CLIENT_LOCK = threading.Lock()
 REDIS_CLIENT = None
 REDIS_WARNING_LOCK = threading.Lock()
 REDIS_LAST_WARNING = 0.0
+ANALYTICS_CLEANUP_LOCK = threading.Lock()
+ANALYTICS_LAST_CLEANUP = 0.0
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ID_RE = re.compile(r"^[a-z0-9-]{12,80}$")
@@ -166,6 +170,30 @@ def initialize_database() -> None:
               slug TEXT PRIMARY KEY,
               hidden_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS visit_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              visitor_hash TEXT NOT NULL,
+              ip_address TEXT NOT NULL,
+              page TEXT NOT NULL,
+              article_slug TEXT NOT NULL DEFAULT '',
+              device_type TEXT NOT NULL,
+              device_model TEXT NOT NULL,
+              os_name TEXT NOT NULL,
+              os_version TEXT NOT NULL,
+              browser_name TEXT NOT NULL,
+              browser_version TEXT NOT NULL,
+              screen_size TEXT NOT NULL,
+              language TEXT NOT NULL,
+              timezone_name TEXT NOT NULL,
+              user_agent TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_visit_events_created
+              ON visit_events(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_visit_events_page
+              ON visit_events(page, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_visit_events_visitor
+              ON visit_events(visitor_hash, created_at DESC);
             """
         )
 
@@ -226,7 +254,7 @@ def check_rate(client: str, action: str, limit: int, window_seconds: int) -> boo
 
 def clean_analytics_page(value: object) -> str:
     page = str(value or "home").strip().lower()
-    allowed = {"home", "articles", "article", "archive", "projects", "services", "resume", "about", "pulse"}
+    allowed = {"home", "articles", "article", "archive", "projects", "services", "resume", "about", "pulse", "privacy"}
     if page not in allowed:
         raise ValueError("页面标识不正确")
     return page
@@ -239,10 +267,207 @@ def analytics_visitor_hash(client_key: str, visitor_id: object) -> str:
     return hashlib.sha256(f"{client_key}:{visitor}".encode("utf-8")).hexdigest()
 
 
-def record_analytics_visit(client_key: str, payload: dict) -> dict:
+def clean_analytics_text(value: object, maximum: int, fallback: str = "未知") -> str:
+    cleaned = " ".join(str(value or "").replace("\x00", " ").split()).strip()
+    return cleaned[:maximum] if cleaned else fallback
+
+
+def normalize_ip_address(value: object) -> str:
+    candidate = str(value or "").split(",", 1)[0].strip()
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return "unknown"
+
+
+def parse_user_agent(user_agent: str, device: dict) -> dict:
+    ua = clean_analytics_text(user_agent, 512)
+    lowered = ua.lower()
+    mobile_hint = device.get("mobile") is True
+    if re.search(r"bot|crawler|spider|slurp", lowered):
+        device_type = "机器人"
+    elif "ipad" in lowered or "tablet" in lowered:
+        device_type = "平板"
+    elif mobile_hint or re.search(r"mobile|iphone|android", lowered):
+        device_type = "手机"
+    else:
+        device_type = "电脑"
+
+    browser_name, browser_version = "其他", ""
+    browser_patterns = (
+        ("Edge", r"Edg(?:A|iOS)?/([0-9.]+)"),
+        ("Chrome", r"(?:Chrome|CriOS)/([0-9.]+)"),
+        ("Firefox", r"(?:Firefox|FxiOS)/([0-9.]+)"),
+        ("Safari", r"Version/([0-9.]+).*Safari/"),
+    )
+    for name, pattern in browser_patterns:
+        match = re.search(pattern, ua)
+        if match:
+            browser_name, browser_version = name, match.group(1)[:32]
+            break
+
+    platform_hint = clean_analytics_text(device.get("platform"), 40, "")
+    os_name, os_version = platform_hint or "其他", clean_analytics_text(device.get("platformVersion"), 40, "")
+    if "Windows" in ua:
+        os_name = "Windows"
+        windows = re.search(r"Windows NT ([0-9.]+)", ua)
+        if windows and not os_version:
+            os_version = windows.group(1)
+    elif "Android" in ua:
+        os_name = "Android"
+        android = re.search(r"Android ([0-9.]+)", ua)
+        if android and not os_version:
+            os_version = android.group(1)
+    elif re.search(r"iPhone|iPad", ua):
+        os_name = "iOS"
+        ios = re.search(r"OS ([0-9_]+)", ua)
+        if ios and not os_version:
+            os_version = ios.group(1).replace("_", ".")
+    elif "Mac OS X" in ua:
+        os_name = "macOS"
+
+    device_model = clean_analytics_text(device.get("model"), 80, "未知型号")
+    if device_model == "未知型号" and os_name == "Android":
+        model_match = re.search(r"Android[^;]*;\s*([^;)]+?)(?:\s+Build/|\))", ua)
+        if model_match:
+            device_model = clean_analytics_text(model_match.group(1), 80, "未知型号")
+    return {
+        "device_type": device_type,
+        "device_model": device_model,
+        "os_name": clean_analytics_text(os_name, 40),
+        "os_version": clean_analytics_text(os_version, 40, ""),
+        "browser_name": browser_name,
+        "browser_version": browser_version,
+        "user_agent": ua,
+    }
+
+
+def cleanup_visit_events(force: bool = False) -> int:
+    global ANALYTICS_LAST_CLEANUP
+    now = time.monotonic()
+    with ANALYTICS_CLEANUP_LOCK:
+        if not force and now - ANALYTICS_LAST_CLEANUP < 3600:
+            return 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=ANALYTICS_RETENTION_DAYS)).isoformat()
+        with database() as connection:
+            cursor = connection.execute("DELETE FROM visit_events WHERE created_at < ?", (cutoff,))
+        ANALYTICS_LAST_CLEANUP = now
+        return max(0, cursor.rowcount)
+
+
+def store_visit_event(client_key: str, client_ip: str, user_agent: str, payload: dict, page: str, slug: str) -> None:
+    if payload.get("consent") is not True:
+        return
+    device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+    parsed = parse_user_agent(user_agent, device)
+    width = max(0, min(10000, int(device.get("screenWidth") or 0)))
+    height = max(0, min(10000, int(device.get("screenHeight") or 0)))
+    visitor_hash = analytics_visitor_hash(client_key, payload.get("visitorId"))
+    with database() as connection:
+        connection.execute(
+            """INSERT INTO visit_events
+               (visitor_hash, ip_address, page, article_slug, device_type, device_model,
+                os_name, os_version, browser_name, browser_version, screen_size,
+                language, timezone_name, user_agent, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                visitor_hash,
+                normalize_ip_address(client_ip),
+                page,
+                slug,
+                parsed["device_type"],
+                parsed["device_model"],
+                parsed["os_name"],
+                parsed["os_version"],
+                parsed["browser_name"],
+                parsed["browser_version"],
+                f"{width}x{height}" if width and height else "未知",
+                clean_analytics_text(device.get("language"), 32),
+                clean_analytics_text(device.get("timezone"), 64),
+                "",
+                utc_now(),
+            ),
+        )
+    cleanup_visit_events()
+
+
+def admin_analytics_summary(days: int) -> dict:
+    days = max(1, min(30, int(days)))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with database() as connection:
+        totals = connection.execute(
+            """SELECT COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv,
+                      COUNT(DISTINCT ip_address) AS ip_count
+               FROM visit_events WHERE created_at >= ?""",
+            (cutoff,),
+        ).fetchone()
+        daily = connection.execute(
+            """SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS pv,
+                      COUNT(DISTINCT visitor_hash) AS uv
+               FROM visit_events WHERE created_at >= ?
+               GROUP BY substr(created_at, 1, 10) ORDER BY day ASC""",
+            (cutoff,),
+        ).fetchall()
+        pages = connection.execute(
+            """SELECT page, article_slug, COUNT(*) AS views
+               FROM visit_events WHERE created_at >= ?
+               GROUP BY page, article_slug ORDER BY views DESC LIMIT 15""",
+            (cutoff,),
+        ).fetchall()
+        devices = connection.execute(
+            """SELECT device_type AS label, COUNT(*) AS count
+               FROM visit_events WHERE created_at >= ?
+               GROUP BY device_type ORDER BY count DESC""",
+            (cutoff,),
+        ).fetchall()
+        browsers = connection.execute(
+            """SELECT browser_name AS label, COUNT(*) AS count
+               FROM visit_events WHERE created_at >= ?
+               GROUP BY browser_name ORDER BY count DESC LIMIT 10""",
+            (cutoff,),
+        ).fetchall()
+        systems = connection.execute(
+            """SELECT os_name AS label, COUNT(*) AS count
+               FROM visit_events WHERE created_at >= ?
+               GROUP BY os_name ORDER BY count DESC LIMIT 10""",
+            (cutoff,),
+        ).fetchall()
+        recent = connection.execute(
+            """SELECT id, ip_address, page, article_slug, device_type, device_model,
+                      os_name, os_version, browser_name, browser_version, screen_size,
+                      language, timezone_name, created_at
+               FROM visit_events WHERE created_at >= ?
+               ORDER BY created_at DESC, id DESC LIMIT 100""",
+            (cutoff,),
+        ).fetchall()
+    return {
+        "ok": True,
+        "days": days,
+        "retentionDays": ANALYTICS_RETENTION_DAYS,
+        "totals": {"pv": totals["pv"], "uv": totals["uv"], "ipCount": totals["ip_count"]},
+        "daily": [dict(row) for row in daily],
+        "pages": [dict(row) for row in pages],
+        "devices": [dict(row) for row in devices],
+        "browsers": [dict(row) for row in browsers],
+        "systems": [dict(row) for row in systems],
+        "recent": [dict(row) for row in recent],
+        "generatedAt": utc_now(),
+    }
+
+
+def record_analytics_visit(client_key: str, payload: dict, client_ip: str = "", user_agent: str = "") -> dict:
+    if payload.get("consent") is not True:
+        return {"ok": True, "available": bool(get_redis_client()), "counted": False, "consentRequired": True}
     redis_client = get_redis_client()
     if redis_client is None:
-        return {"ok": True, "available": False, "message": "实时统计服务暂未启用"}
+        page = clean_analytics_page(payload.get("page"))
+        slug = str(payload.get("articleSlug") or "").strip()
+        if page == "article":
+            slug = valid_article_slug(slug)
+        counted = payload.get("heartbeat") is not True
+        if counted:
+            store_visit_event(client_key, client_ip, user_agent, payload, page, slug)
+        return {"ok": True, "available": False, "counted": counted, "message": "实时统计服务暂未启用"}
 
     page = clean_analytics_page(payload.get("page"))
     slug = str(payload.get("articleSlug") or "").strip()
@@ -274,6 +499,8 @@ def record_analytics_visit(client_key: str, payload: dict) -> dict:
             if slug:
                 pipeline.zincrby(f"{REDIS_PREFIX}:article:hot", 1, slug)
         pipeline.execute()
+        if counted:
+            store_visit_event(client_key, client_ip, user_agent, payload, page, slug)
         return {"ok": True, "available": True, "counted": counted}
     except Exception as exc:
         log_redis_warning("analytics write", exc)
@@ -709,8 +936,11 @@ class ResumeHandler(BaseHTTPRequestHandler):
         return payload
 
     def client_key(self) -> str:
-        address = str(self.headers.get("X-Real-IP") or self.client_address[0] or "unknown")[:80]
+        address = self.client_ip()
         return hashlib.sha256(address.encode("utf-8")).hexdigest()[:24]
+
+    def client_ip(self) -> str:
+        return normalize_ip_address(self.headers.get("X-Real-IP") or self.client_address[0] or "unknown")
 
     def require_human_form(self, payload: dict) -> None:
         if payload.get("website"):
@@ -763,6 +993,14 @@ class ResumeHandler(BaseHTTPRequestHandler):
                         "smtpHost": SMTP_HOST if SMTP_HOST else "",
                     },
                 )
+                return
+            if path == "/admin/analytics":
+                if not self.require_admin():
+                    return
+                days_text = parse_qs(parsed.query).get("days", ["7"])[0]
+                if not str(days_text).isdigit():
+                    raise ValueError("统计天数不正确")
+                self.json_response(HTTPStatus.OK, admin_analytics_summary(int(days_text)))
                 return
             if path == "/articles":
                 with database() as connection:
@@ -876,7 +1114,15 @@ class ResumeHandler(BaseHTTPRequestHandler):
                     self.error_response(HTTPStatus.TOO_MANY_REQUESTS, "访问统计请求过于频繁")
                     return
                 payload = self.json_body(maximum=8 * 1024)
-                self.json_response(HTTPStatus.OK, record_analytics_visit(self.client_key(), payload))
+                self.json_response(
+                    HTTPStatus.OK,
+                    record_analytics_visit(
+                        self.client_key(),
+                        payload,
+                        self.client_ip(),
+                        self.headers.get("User-Agent", ""),
+                    ),
+                )
             except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
                 self.error_response(HTTPStatus.BAD_REQUEST, str(exc))
             return
@@ -1077,6 +1323,16 @@ class ResumeHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
+        if path == "/admin/analytics":
+            if not self.require_admin():
+                return
+            try:
+                with database() as connection:
+                    cursor = connection.execute("DELETE FROM visit_events")
+                self.json_response(HTTPStatus.OK, {"ok": True, "deleted": max(0, cursor.rowcount)})
+            except sqlite3.Error:
+                self.error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "访问记录删除失败，请检查服务日志")
+            return
         article_match = re.fullmatch(r"/admin/articles/([a-z0-9-]{2,100})", path)
         if article_match:
             if not self.require_admin():

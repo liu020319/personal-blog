@@ -4,6 +4,7 @@
   const apiBase = String(window.BLOG_DATA?.resume?.api || './blog-api').replace(/\/$/, '');
   const agentApiBase = './agent-api';
   const visitorKey = 'xiaoliu-blog-visitor-id';
+  const analyticsConsentKey = 'xiaoliu-analytics-consent-v1';
 
   class InteractionError extends Error {
     constructor(message, status) {
@@ -48,12 +49,54 @@
   const like = (slug) => request(`/articles/${encodeURIComponent(slug)}/likes`, jsonOptions({ visitorId: visitorId() }));
   const comment = (slug, payload) => request(`/articles/${encodeURIComponent(slug)}/comments`, jsonOptions(payload));
   const contact = (payload) => request('/contact', jsonOptions(payload));
-  const analyticsVisit = (page, articleSlug = '', heartbeat = false) => request('/analytics/visit', jsonOptions({
-    visitorId: visitorId(),
-    page,
-    articleSlug,
-    heartbeat
-  }));
+  const analyticsConsent = () => localStorage.getItem(analyticsConsentKey) || '';
+  const setAnalyticsConsent = (value) => {
+    if (!['accepted', 'declined'].includes(value)) throw new InteractionError('统计偏好值不正确', 400);
+    localStorage.setItem(analyticsConsentKey, value);
+    window.dispatchEvent(new CustomEvent('analytics-consent-changed', { detail: value }));
+  };
+  let deviceInfoPromise;
+  async function deviceInfo() {
+    if (deviceInfoPromise) return deviceInfoPromise;
+    deviceInfoPromise = (async () => {
+      const result = {
+        mobile: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent),
+        model: '',
+        platform: navigator.platform || '',
+        platformVersion: '',
+        language: navigator.language || '',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+        screenWidth: window.screen?.width || 0,
+        screenHeight: window.screen?.height || 0
+      };
+      const uaData = navigator.userAgentData;
+      if (!uaData) return result;
+      result.mobile = Boolean(uaData.mobile);
+      result.platform = uaData.platform || result.platform;
+      if (typeof uaData.getHighEntropyValues === 'function') {
+        try {
+          const hints = await uaData.getHighEntropyValues(['model', 'platformVersion']);
+          result.model = hints.model || '';
+          result.platformVersion = hints.platformVersion || '';
+        } catch (_) {
+          // Some browsers intentionally do not expose high-entropy device hints.
+        }
+      }
+      return result;
+    })();
+    return deviceInfoPromise;
+  }
+  const analyticsVisit = async (page, articleSlug = '', heartbeat = false) => {
+    if (analyticsConsent() !== 'accepted') return { ok: true, counted: false, consentRequired: true };
+    return request('/analytics/visit', jsonOptions({
+      visitorId: visitorId(),
+      page,
+      articleSlug,
+      heartbeat,
+      consent: true,
+      device: await deviceInfo()
+    }));
+  };
   const analyticsSummary = () => request('/analytics/summary');
 
   async function adminRequest(path, options = {}) {
@@ -77,6 +120,8 @@
   const deleteArticle = (slug) => adminRequest(`/admin/articles/${encodeURIComponent(slug)}`, { method: 'DELETE' });
   const emailStatus = () => adminRequest('/admin/email-status');
   const testEmail = () => adminRequest('/admin/email/test', { method: 'POST' });
+  const adminAnalytics = (days = 7) => adminRequest(`/admin/analytics?days=${encodeURIComponent(days)}`);
+  const deleteAnalytics = () => adminRequest('/admin/analytics', { method: 'DELETE' });
 
   async function agentMetrics() {
     const token = window.ResumeRepository?.getToken() || '';
@@ -99,6 +144,8 @@
     contact,
     analyticsVisit,
     analyticsSummary,
+    analyticsConsent,
+    setAnalyticsConsent,
     adminComments,
     approveComment,
     deleteComment,
@@ -109,6 +156,8 @@
     deleteArticle,
     emailStatus,
     testEmail,
+    adminAnalytics,
+    deleteAnalytics,
     agentMetrics
   };
 })();

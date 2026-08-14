@@ -261,6 +261,41 @@
     });
   }
 
+  function renderPrivacy() {
+    const interactions = window.BlogInteractions;
+    const consent = interactions.analyticsConsent();
+    const statusCopy = consent === 'accepted' ? '你当前已同意访问统计。' : consent === 'declined' ? '你当前选择了仅使用必要功能。' : '你还没有选择访问统计偏好。';
+    main.innerHTML = `<section class="page-hero privacy-hero"><div class="shell"><p class="eyebrow">PRIVACY & ANALYTICS</p><h1>访问统计说明</h1><p>我用这些数据了解博客是否真的有人阅读、哪些页面更常被访问，以及移动端体验是否需要调整。</p></div></section><section class="section privacy-section"><div class="shell privacy-layout"><article><span>01</span><div><h2>会记录什么</h2><p>经你同意后，后台记录访问时间、页面、IP 地址、用于计算 UV 的不可逆访客摘要、设备类型、可能获得的设备型号、操作系统、浏览器、屏幕尺寸、语言和时区。浏览器拿不到准确型号时只显示“未知型号”。</p></div></article><article><span>02</span><div><h2>怎样使用</h2><p>数据只用于本站访问统计、兼容性分析和安全排查，不出售，不用于广告投放，不与评论、合作联系方式或 Agent 聊天内容合并画像。</p></div></article><article><span>03</span><div><h2>保存与权限</h2><p>访问明细默认保存 30 天，仅小刘登录管理中心后可见；到期自动删除，也可以由管理员提前全部清除。Redis 只保存短期聚合统计，不保存原始 IP。</p></div></article><article><span>04</span><div><h2>你的选择</h2><p>拒绝或撤回不会影响文章、项目、评论、简历和 Agent 等必要功能。清除浏览器站点数据后，系统会再次询问。</p></div></article><div class="privacy-choice"><strong>${escapeHtml(statusCopy)}</strong><div><button class="secondary-button" id="analytics-decline" type="button">仅必要功能</button><button class="primary-button" id="analytics-accept" type="button">同意访问统计</button></div></div></div></section>`;
+    document.getElementById('analytics-accept').addEventListener('click', async () => {
+      interactions.setAnalyticsConsent('accepted');
+      await openSiteDialog({ tone: 'success', eyebrow: 'PREFERENCE SAVED', title: '访问统计已开启', message: '你的选择已经保存在当前浏览器，可以随时回到本页撤回。', confirmLabel: '我知道了' });
+      renderPrivacy();
+    });
+    document.getElementById('analytics-decline').addEventListener('click', async () => {
+      interactions.setAnalyticsConsent('declined');
+      await openSiteDialog({ tone: 'success', eyebrow: 'PREFERENCE SAVED', title: '已使用必要功能模式', message: '本站不会主动提交访问统计，文章和其他功能仍可正常使用。', confirmLabel: '我知道了' });
+      renderPrivacy();
+    });
+  }
+
+  function showAnalyticsConsent() {
+    const interactions = window.BlogInteractions;
+    if (interactions.analyticsConsent() || document.getElementById('analytics-consent')) return;
+    const panel = document.createElement('section');
+    panel.className = 'analytics-consent';
+    panel.id = 'analytics-consent';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', '访问统计选择');
+    panel.innerHTML = `<div><strong>是否允许访问统计？</strong><p>同意后会记录页面、IP和设备信息，明细仅管理员可见并在30天后删除。拒绝不影响正常使用。 <a href="#/privacy">查看完整说明</a></p></div><div class="analytics-consent-actions"><button class="secondary-button" data-choice="declined" type="button">仅必要功能</button><button class="primary-button" data-choice="accepted" type="button">同意统计</button></div>`;
+    document.body.appendChild(panel);
+    panel.querySelectorAll('[data-choice]').forEach((button) => button.addEventListener('click', () => {
+      interactions.setAnalyticsConsent(button.dataset.choice);
+      panel.remove();
+      if (button.dataset.choice === 'accepted') recordCurrentRoute(false);
+    }));
+    panel.querySelector('a').addEventListener('click', () => panel.remove());
+  }
+
   function openSiteDialog({ tone = 'review', eyebrow = 'PLEASE CONFIRM', title, message, details = '', confirmLabel = '我知道了', cancelLabel = '' }) {
     return new Promise((resolve) => {
       const dialog = document.createElement('dialog');
@@ -459,7 +494,7 @@
     }, 4500);
   }
 
-  async function renderManage() {
+  async function renderManage(analyticsDays = 7) {
     const repository = window.ResumeRepository;
     const interactions = window.BlogInteractions;
     const handleAdminError = (error) => {
@@ -468,15 +503,16 @@
     main.innerHTML = '<section class="section manage-loading"><div class="shell"><p>正在读取站点管理数据…</p></div></section>';
     if (!repository?.getToken()) {
       main.innerHTML = `<section class="page-hero"><div class="shell"><p class="eyebrow">SITE ADMIN</p><h1>站点管理</h1><p>合作联系方式、待审核评论和简历管理都使用同一份服务器管理口令。</p></div></section><section class="section"><div class="shell manage-login-card"><span>LOCKED</span><h2>请输入管理口令</h2><p>口令只保存在当前浏览器会话，关闭页面后自动清除。</p><button class="primary-button" id="manage-login" type="button">进入管理中心</button></div></section>`;
-      document.getElementById('manage-login').addEventListener('click', () => repository.login().then(renderManage).catch((error) => handleAdminError(error)));
+      document.getElementById('manage-login').addEventListener('click', () => repository.login().then(() => renderManage()).catch((error) => handleAdminError(error)));
       return;
     }
     try {
-      const [commentResult, leadResult, emailResult, agentResult] = await Promise.all([
+      const [commentResult, leadResult, emailResult, agentResult, analyticsResult] = await Promise.all([
         interactions.adminComments('all'),
         interactions.adminLeads('all'),
         interactions.emailStatus().catch((error) => ({ available: false, message: error.message })),
-        interactions.agentMetrics().catch((error) => ({ available: false, message: error.message }))
+        interactions.agentMetrics().catch((error) => ({ available: false, message: error.message })),
+        interactions.adminAnalytics(analyticsDays).catch((error) => ({ available: false, message: error.message }))
       ]);
       if (routeParts()[0] !== 'manage') return;
       const comments = commentResult.items || [];
@@ -488,9 +524,28 @@
       const agentStatusCopy = agentResult.available === false ? '暂时无法读取 Agent 运行状态' : `今日通义千问调用 ${Number(agentMetrics.dailyUsed || 0)} / ${Number(agentMetrics.dailyLimit || 0)} · 缓存命中 ${Number(agentMetrics.cacheHits || 0)} 次`;
       const commentCards = comments.length ? comments.map((comment) => `<article class="manage-item"><div class="manage-item-head"><div><span class="status-pill status-${escapeHtml(comment.status)}">${comment.status === 'pending' ? '待审核' : '已公开'}</span><h3>${escapeHtml(comment.nickname)} · ${escapeHtml(postName(comment.article_slug))}</h3></div><time>${formatDateTime(comment.created_at)}</time></div><p>${escapeHtml(comment.content)}</p><div class="manage-actions">${comment.status === 'pending' ? `<button class="primary-button approve-comment" data-id="${escapeHtml(comment.id)}" type="button">批准公开</button>` : `<a class="secondary-button" href="#/article/${encodeURIComponent(comment.article_slug)}">查看文章</a>`}<button class="secondary-button delete-comment" data-id="${escapeHtml(comment.id)}" type="button">删除评论</button></div></article>`).join('') : '<div class="manage-empty">目前没有评论记录。</div>';
       const leadCards = leads.length ? leads.map((lead) => `<article class="manage-item lead-item"><div class="manage-item-head"><div><span class="status-pill status-${escapeHtml(lead.status)}">${({ new: '新留言', contacted: '已联系', closed: '已结束' })[lead.status]}</span><h3>${escapeHtml(lead.name)} · ${escapeHtml(lead.contact_method)}</h3></div><time>${formatDateTime(lead.created_at)}</time></div><button class="contact-value copy-contact" type="button" data-value="${escapeHtml(lead.contact_value)}" title="点击复制">${escapeHtml(lead.contact_value)} <small>复制</small></button><p>${escapeHtml(lead.requirement)}</p><div class="manage-actions"><select class="lead-status" data-id="${escapeHtml(lead.id)}" aria-label="更新合作状态"><option value="new" ${lead.status === 'new' ? 'selected' : ''}>新留言</option><option value="contacted" ${lead.status === 'contacted' ? 'selected' : ''}>已联系</option><option value="closed" ${lead.status === 'closed' ? 'selected' : ''}>已结束</option></select><button class="secondary-button delete-lead" data-id="${escapeHtml(lead.id)}" type="button">删除记录</button></div></article>`).join('') : '<div class="manage-empty">目前没有合作留言。</div>';
-      main.innerHTML = `<section class="page-hero manage-hero"><div class="shell manage-hero-grid"><div><p class="eyebrow">SITE ADMIN</p><h1>站点管理</h1><p>普通评论通过自动检查后立即公开，可疑内容进入人工审核；联系方式始终只对管理员可见。</p></div><button class="secondary-button" id="manage-logout" type="button">退出管理</button></div></section><section class="section manage-summary"><div class="shell summary-grid"><article><span>${leads.filter((lead) => lead.status === 'new').length}</span><p>条新合作留言</p></article><article><span>${comments.filter((comment) => comment.status === 'pending').length}</span><p>条待审核评论</p></article><article><span>${comments.filter((comment) => comment.status === 'approved').length}</span><p>条已公开评论</p></article><article><span>${Number(agentMetrics.dailyUsed || 0)}</span><p>次今日 Agent 模型调用</p></article></div></section><section class="section manage-operations"><div class="shell operations-grid"><article class="operation-card"><div><p class="eyebrow">EMAIL NOTIFICATIONS</p><h2>邮件提醒</h2><p>${emailStatusCopy}</p></div><span class="operation-state ${emailReady ? 'is-ready' : 'is-warning'}">${emailReady ? '运行中' : '待配置'}</span><button class="secondary-button" id="test-email" type="button" ${emailReady ? '' : 'disabled'}>发送测试邮件</button></article><article class="operation-card"><div><p class="eyebrow">AGENT OPERATIONS</p><h2>技术助理运行状态</h2><p>${agentStatusCopy}</p></div><span class="operation-state ${agentResult.available === false ? 'is-warning' : 'is-ready'}">${agentResult.available === false ? '待更新' : '运行中'}</span><dl class="operation-metrics"><div><dt>成功回答</dt><dd>${Number(agentMetrics.successfulResponses || 0)}</dd></div><div><dt>限流拦截</dt><dd>${Number(agentMetrics.rateLimitedRequests || 0)}</dd></div><div><dt>当前并发</dt><dd>${Number(agentMetrics.activeRequests || 0)}</dd></div></dl></article></div></section><section class="section manage-content"><div class="shell manage-columns"><section><div class="manage-section-heading"><p class="eyebrow">COOPERATION LEADS</p><h2>合作联系方式</h2></div><div class="manage-list">${leadCards}</div></section><section><div class="manage-section-heading"><p class="eyebrow">COMMENTS</p><h2>文章评论</h2></div><div class="manage-list">${commentCards}</div></section></div></section>`;
-      const refresh = () => renderManage();
+      const analytics = analyticsResult.available === false ? null : analyticsResult;
+      const analyticsTotals = analytics?.totals || { pv: 0, uv: 0, ipCount: 0 };
+      const analyticsMax = Math.max(1, ...(analytics?.daily || []).map((item) => Number(item.pv || 0)));
+      const pageLabel = (item) => item.page === 'article' ? `文章：${postName(item.article_slug)}` : ({ home: '首页', articles: '文章列表', archive: '归档', projects: '项目空间', services: '合作服务', resume: '简历仓库', about: '关于我', pulse: '站点脉搏', privacy: '隐私说明' })[item.page] || item.page;
+      const breakdownRows = (items, valueKey = 'count', labeler = (item) => item.label || '未识别') => {
+        const max = Math.max(1, ...(items || []).map((item) => Number(item[valueKey] || 0)));
+        return (items || []).length ? items.map((item) => `<div class="analytics-breakdown-row"><div><span>${escapeHtml(labeler(item))}</span><strong>${Number(item[valueKey] || 0)}</strong></div><i><b style="width:${Math.max(4, Math.round(Number(item[valueKey] || 0) / max * 100))}%"></b></i></div>`).join('') : '<p class="analytics-empty">当前时间范围内还没有记录。</p>';
+      };
+      const analyticsSection = analytics ? `<section class="section manage-analytics"><div class="shell"><div class="analytics-heading"><div><p class="eyebrow">VISITOR ANALYTICS</p><h2>访问分析</h2><p>只统计已同意的访客，原始 IP 仅管理员可见，${Number(analytics.retentionDays || 30)} 天后自动删除。</p></div><div class="analytics-toolbar"><label>时间范围<select id="analytics-days"><option value="1" ${analyticsDays === 1 ? 'selected' : ''}>今天</option><option value="7" ${analyticsDays === 7 ? 'selected' : ''}>近 7 天</option><option value="30" ${analyticsDays === 30 ? 'selected' : ''}>近 30 天</option></select></label><button class="secondary-button" id="delete-analytics" type="button">清空访问记录</button></div></div><div class="analytics-kpis"><article><span>${Number(analyticsTotals.pv || 0)}</span><p>PV 页面浏览</p></article><article><span>${Number(analyticsTotals.uv || 0)}</span><p>UV 独立访客</p></article><article><span>${Number(analyticsTotals.ipCount || 0)}</span><p>不同 IP</p></article><article><span>${Number(analytics.retentionDays || 30)}</span><p>天保留期</p></article></div><div class="analytics-panel"><div class="analytics-panel-heading"><h3>PV / UV 趋势</h3><span>按天汇总</span></div><div class="analytics-chart">${(analytics.daily || []).length ? analytics.daily.map((item) => `<div class="analytics-day"><div class="analytics-columns"><i class="pv" style="height:${Math.max(4, Math.round(Number(item.pv || 0) / analyticsMax * 100))}%" title="PV ${Number(item.pv || 0)}"></i><i class="uv" style="height:${Math.max(4, Math.round(Number(item.uv || 0) / analyticsMax * 100))}%" title="UV ${Number(item.uv || 0)}"></i></div><strong>${Number(item.pv || 0)} / ${Number(item.uv || 0)}</strong><span>${escapeHtml(item.day.slice(5))}</span></div>`).join('') : '<p class="analytics-empty">当前时间范围内还没有访问记录。</p>'}</div><div class="analytics-legend"><span><i class="pv"></i>PV</span><span><i class="uv"></i>UV</span></div></div><div class="analytics-breakdowns"><article><h3>热门页面</h3>${breakdownRows(analytics.pages, 'views', pageLabel)}</article><article><h3>设备类型</h3>${breakdownRows(analytics.devices)}</article><article><h3>浏览器</h3>${breakdownRows(analytics.browsers)}</article><article><h3>操作系统</h3>${breakdownRows(analytics.systems)}</article></div><div class="analytics-panel analytics-recent"><div class="analytics-panel-heading"><h3>最近访问</h3><span>最多显示 100 条</span></div><div class="analytics-table-wrap"><table><thead><tr><th>时间</th><th>IP</th><th>页面</th><th>设备 / 型号</th><th>系统 / 浏览器</th><th>屏幕</th></tr></thead><tbody>${(analytics.recent || []).length ? analytics.recent.map((item) => `<tr><td>${escapeHtml(formatDateTime(item.created_at))}</td><td><code>${escapeHtml(item.ip_address || '未识别')}</code></td><td>${escapeHtml(pageLabel(item))}</td><td>${escapeHtml(item.device_type || '未识别')}${item.device_model ? `<small>${escapeHtml(item.device_model)}</small>` : ''}</td><td>${escapeHtml(item.os_name || '未识别')}${item.os_version ? ` ${escapeHtml(item.os_version)}` : ''}<small>${escapeHtml(item.browser_name || '未识别')}${item.browser_version ? ` ${escapeHtml(item.browser_version)}` : ''}</small></td><td>${escapeHtml(item.screen_size || '未识别')}</td></tr>`).join('') : '<tr><td colspan="6">当前时间范围内还没有访问记录。</td></tr>'}</tbody></table></div></div></div></section>` : `<section class="section manage-analytics"><div class="shell"><div class="manage-empty">访问分析暂时无法读取：${escapeHtml(analyticsResult.message || '请检查数据服务')}</div></div></section>`;
+      main.innerHTML = `<section class="page-hero manage-hero"><div class="shell manage-hero-grid"><div><p class="eyebrow">SITE ADMIN</p><h1>站点管理</h1><p>普通评论通过自动检查后立即公开，可疑内容进入人工审核；联系方式始终只对管理员可见。</p></div><button class="secondary-button" id="manage-logout" type="button">退出管理</button></div></section><section class="section manage-summary"><div class="shell summary-grid"><article><span>${leads.filter((lead) => lead.status === 'new').length}</span><p>条新合作留言</p></article><article><span>${comments.filter((comment) => comment.status === 'pending').length}</span><p>条待审核评论</p></article><article><span>${comments.filter((comment) => comment.status === 'approved').length}</span><p>条已公开评论</p></article><article><span>${Number(agentMetrics.dailyUsed || 0)}</span><p>次今日 Agent 模型调用</p></article></div></section><section class="section manage-operations"><div class="shell operations-grid"><article class="operation-card"><div><p class="eyebrow">EMAIL NOTIFICATIONS</p><h2>邮件提醒</h2><p>${emailStatusCopy}</p></div><span class="operation-state ${emailReady ? 'is-ready' : 'is-warning'}">${emailReady ? '运行中' : '待配置'}</span><button class="secondary-button" id="test-email" type="button" ${emailReady ? '' : 'disabled'}>发送测试邮件</button></article><article class="operation-card"><div><p class="eyebrow">AGENT OPERATIONS</p><h2>技术助理运行状态</h2><p>${agentStatusCopy}</p></div><span class="operation-state ${agentResult.available === false ? 'is-warning' : 'is-ready'}">${agentResult.available === false ? '待更新' : '运行中'}</span><dl class="operation-metrics"><div><dt>成功回答</dt><dd>${Number(agentMetrics.successfulResponses || 0)}</dd></div><div><dt>限流拦截</dt><dd>${Number(agentMetrics.rateLimitedRequests || 0)}</dd></div><div><dt>当前并发</dt><dd>${Number(agentMetrics.activeRequests || 0)}</dd></div></dl></article></div></section>${analyticsSection}<section class="section manage-content"><div class="shell manage-columns"><section><div class="manage-section-heading"><p class="eyebrow">COOPERATION LEADS</p><h2>合作联系方式</h2></div><div class="manage-list">${leadCards}</div></section><section><div class="manage-section-heading"><p class="eyebrow">COMMENTS</p><h2>文章评论</h2></div><div class="manage-list">${commentCards}</div></section></div></section>`;
+      const refresh = () => renderManage(analyticsDays);
       document.getElementById('manage-logout').addEventListener('click', () => { repository.logout(); renderManage(); });
+      document.getElementById('analytics-days')?.addEventListener('change', (event) => renderManage(Number(event.currentTarget.value)));
+      document.getElementById('delete-analytics')?.addEventListener('click', async () => {
+        const confirmed = await openSiteDialog({ tone: 'review', eyebrow: 'DELETE ANALYTICS', title: '确认清空访问记录？', message: '原始 IP、设备信息和页面访问统计都会删除，无法恢复。', confirmLabel: '确认清空', cancelLabel: '先保留' });
+        if (!confirmed) return;
+        try {
+          await interactions.deleteAnalytics();
+          await openSiteDialog({ tone: 'success', eyebrow: 'ANALYTICS CLEARED', title: '访问记录已清空', message: '新的访问会从现在开始重新统计。', confirmLabel: '我知道了' });
+          refresh();
+        } catch (error) { handleAdminError(error); }
+      });
       document.getElementById('test-email')?.addEventListener('click', async (event) => {
         const button = event.currentTarget;
         button.disabled = true;
@@ -619,18 +674,21 @@
     else if (section === 'services') renderServices();
     else if (section === 'resume') renderResume();
     else if (section === 'manage') renderManage();
+    else if (section === 'privacy') renderPrivacy();
     else if (section === 'about') renderAbout();
     else renderNotFound();
     updateActiveNav(section || 'home');
     closeMobileMenu();
     recordCurrentRoute(false);
+    if (['manage', 'privacy'].includes(section)) document.getElementById('analytics-consent')?.remove();
+    else showAnalyticsConsent();
   }
 
   function recordCurrentRoute(heartbeat) {
     if (document.visibilityState === 'hidden') return;
     const [section, detail] = routeParts();
     const page = section || 'home';
-    const allowed = new Set(['home', 'articles', 'article', 'archive', 'projects', 'services', 'resume', 'about', 'pulse']);
+    const allowed = new Set(['home', 'articles', 'article', 'archive', 'projects', 'services', 'resume', 'about', 'pulse', 'privacy']);
     if (!allowed.has(page)) return;
     window.BlogInteractions.analyticsVisit(page, page === 'article' ? detail : '', heartbeat).catch(() => {});
   }

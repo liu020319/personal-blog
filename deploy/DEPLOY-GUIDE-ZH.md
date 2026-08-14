@@ -1,4 +1,4 @@
-# xiaoliudev.com 博客 V16 发布说明
+# xiaoliudev.com 博客 V17 发布说明
 
 ## 最终访问关系
 
@@ -9,37 +9,37 @@
 - `https://xiaoliudev.com/agent-api/`：小刘技术与项目助理接口；
 - `https://xiaoliudev.com/api/`：继续转发到原 Spring Boot 服务。
 
-页面仍由 Nginx 直接提供。会产生数据的功能由轻量 Python 服务处理，默认仅监听 `127.0.0.1:8091`；文章、点赞、评论和合作留言保存在 SQLite，Redis 只负责高频访问计数、UV、在线窗口、热榜与限流，不占用现有 MySQL。
+页面仍由 Nginx 直接提供。会产生数据的功能由轻量 Python 服务处理，默认仅监听 `127.0.0.1:8091`；文章、点赞、评论、合作留言以及经访客同意的 30 天访问明细保存在 SQLite，Redis 只负责高频访问计数、UV、在线窗口、热榜与限流，不占用现有 MySQL。
 
 ## 发布包
 
 本地成品：
 
 ```text
-D:\CodexWorkFiles\output\personal-blog-release-20260814-v16.zip
+D:\CodexWorkFiles\output\personal-blog-release-20260815-v17.zip
 ```
 
 上传位置：
 
 ```text
-/home/xiaoliu/personal-blog-release-20260814-v16.zip
+/home/xiaoliu/personal-blog-release-20260815-v17.zip
 ```
 
 ## 1. 解压
 
 ```bash
-mkdir -p /home/xiaoliu/personal-blog-release-20260814-v16
-unzip -q -o /home/xiaoliu/personal-blog-release-20260814-v16.zip \
-  -d /home/xiaoliu/personal-blog-release-20260814-v16
+mkdir -p /home/xiaoliu/personal-blog-release-20260815-v17
+unzip -q -o /home/xiaoliu/personal-blog-release-20260815-v17.zip \
+  -d /home/xiaoliu/personal-blog-release-20260815-v17
 sed -i 's/\r$//' \
-  /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-release.sh \
-  /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-redis-analytics.sh
+  /home/xiaoliu/personal-blog-release-20260815-v17/deploy/install-release.sh \
+  /home/xiaoliu/personal-blog-release-20260815-v17/deploy/install-redis-analytics.sh
 ```
 
 ## 2. 安装静态页面与博客服务
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-release.sh
+bash /home/xiaoliu/personal-blog-release-20260815-v17/deploy/install-release.sh
 ```
 
 脚本会：
@@ -60,7 +60,7 @@ bash /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-release.sh
 第一次启用 Redis 时执行：
 
 ```bash
-bash /home/xiaoliu/personal-blog-release-20260814-v16/deploy/install-redis-analytics.sh
+bash /home/xiaoliu/personal-blog-release-20260815-v17/deploy/install-redis-analytics.sh
 ```
 
 脚本会通过 Ubuntu 软件源安装 `redis-server` 与 `python3-redis`，创建独立的 `xiaoliu-blog-redis` 服务，生成随机密码，只监听本机 `127.0.0.1:6381`，并把 Redis 数据内存限制为 64MB。它不修改默认 6379 服务，避免影响康联云以后使用 Redis。密码只写入权限为 `0600` 的博客环境文件，不会进入网页或 GitHub。
@@ -145,6 +145,8 @@ https://xiaoliudev.com/#/manage
 - 查看自动公开的普通评论，并人工处理可疑待审核评论；
 - 查看邮件提醒配置并发送测试邮件；
 - 查看 Agent 当日模型调用、缓存、限流和并发状态；
+- 查看近 1、7 或 30 天 PV、UV、IP、页面、设备、系统和浏览器分布；
+- 查看最近访问明细并按需清空；明细默认 30 天自动删除；
 - 删除不合适的评论或合作记录。
 
 查看管理口令：
@@ -158,7 +160,7 @@ sudo sed -n 's/^RESUME_ADMIN_TOKEN=//p' /etc/personal-blog-resume.env
 ## 数据位置
 
 ```text
-/var/lib/personal-blog-resumes/blog.db              # 发布文章、点赞、评论、合作联系方式
+/var/lib/personal-blog-resumes/blog.db              # 文章、互动、合作联系方式、访问统计明细
 /var/lib/personal-blog-resumes/resumes.json         # 公开简历版本记录
 /var/lib/personal-blog-resumes/files/               # 正在公开的 PDF
 /var/lib/personal-blog-resumes/deleted-resumes.json # 删除的简历记录
